@@ -234,17 +234,32 @@ class FleetManager:
         for vid, v in self.vessels.items():
             home = self.home_positions[vid]
             cur = v["state"]
-            wpts_x = [cur[0] * METERS_TO_NMI, home.x * METERS_TO_NMI]
-            wpts_y = [cur[1] * METERS_TO_NMI, home.y * METERS_TO_NMI]
-            v["waypoints_x"] = wpts_x
-            v["waypoints_y"] = wpts_y
-            v["i_wpt"] = 1
-            v["desired_speed"] = 5.0
-            v["status"] = AssetStatus.RETURNING
+            dist = math.sqrt((cur[0] - home.x) ** 2 + (cur[1] - home.y) ** 2)
+            if dist < 5.0:
+                # Already at home — go idle immediately
+                v["status"] = AssetStatus.IDLE
+                v["desired_speed"] = 0.0
+            else:
+                wpts_x = [cur[0] * METERS_TO_NMI, home.x * METERS_TO_NMI]
+                wpts_y = [cur[1] * METERS_TO_NMI, home.y * METERS_TO_NMI]
+                v["waypoints_x"] = wpts_x
+                v["waypoints_y"] = wpts_y
+                v["i_wpt"] = 1
+                v["desired_speed"] = 5.0
+                v["status"] = AssetStatus.RETURNING
 
         home_drone = self.home_positions[self.drone.asset_id]
-        self.drone.set_waypoints([home_drone], None)
-        self.drone.status = AssetStatus.RETURNING
+        drone_dist = math.sqrt(
+            (self.drone.x - home_drone.x) ** 2 +
+            (self.drone.y - home_drone.y) ** 2
+        )
+        if drone_dist < 5.0:
+            self.drone.status = AssetStatus.IDLE
+            self.drone.waypoints = []
+        else:
+            self.drone.set_waypoints([home_drone], None)
+            self.drone.status = AssetStatus.RETURNING
+
         self.active_mission = None
         self.formation = FormationType.INDEPENDENT
 

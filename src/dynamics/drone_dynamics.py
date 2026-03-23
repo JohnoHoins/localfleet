@@ -40,7 +40,7 @@ class DroneAgent:
             self._orbit_angle = 0.0
 
     def step(self, dt: float):
-        if self.status != AssetStatus.EXECUTING or not self.waypoints:
+        if self.status not in (AssetStatus.EXECUTING, AssetStatus.RETURNING) or not self.waypoints:
             return
 
         # Smooth altitude transition
@@ -86,7 +86,7 @@ class DroneAgent:
             domain=DomainType.AIR,
             x=self.x, y=self.y,
             heading=self.heading,
-            speed=self.speed if self.status == AssetStatus.EXECUTING else 0.0,
+            speed=self.speed if self.status in (AssetStatus.EXECUTING, AssetStatus.RETURNING) else 0.0,
             altitude=self.altitude,
             status=self.status,
             mission_type=self.mission_type,
