@@ -56,6 +56,13 @@ def create_router() -> APIRouter:
             "noise_meters": req.noise_meters,
         }
 
+    @router.post("/return-to-base")
+    async def post_return_to_base(request: Request):
+        """Trigger comms-lost return-to-base for all assets."""
+        commander = request.app.state.commander
+        commander.return_to_base()
+        return {"success": True, "action": "return_to_base"}
+
     @router.post("/voice-command", response_model=CommandResponse)
     async def post_voice_command(request: Request, audio: UploadFile = File(...)):
         """Transcribe uploaded audio and dispatch as fleet command."""

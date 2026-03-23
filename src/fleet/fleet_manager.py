@@ -11,6 +11,7 @@ from typing import Dict, List
 from src.schemas import (
     FleetCommand, FleetState, AssetState, AssetCommand,
     DomainType, AssetStatus, GpsMode, MissionType, Waypoint, FormationType,
+    DronePattern,
 )
 from src.dynamics.vessel_dynamics import vessel_dynamics
 from src.dynamics.controller import controller
@@ -19,6 +20,8 @@ from src.dynamics.drone_dynamics import DroneAgent
 from src.core.integration import integration
 from src.navigation.planning import waypoint_selection, planning
 from src.utils.gps_denied import degrade_position
+from src.fleet.drone_coordinator import DroneCoordinator
+from src.fleet.formations import apply_formation
 
 METERS_TO_NMI = 1.0 / 1852.0
 SAT_AMP = 20  # actuator saturation amplitude
@@ -46,6 +49,13 @@ class FleetManager:
 
         # Drone
         self.drone = DroneAgent("eagle-1", x=200.0, y=-100.0, altitude=100.0)
+        self.drone_coordinator = DroneCoordinator(self.drone)
+
+        # Home positions for return-to-base
+        self.home_positions: Dict[str, Waypoint] = {
+            vid: Waypoint(x=x0, y=y0) for vid, x0, y0 in vessel_configs
+        }
+        self.home_positions["eagle-1"] = Waypoint(x=200.0, y=-100.0)
 
         # GPS mode
         self.gps_mode = GpsMode.FULL
@@ -54,6 +64,7 @@ class FleetManager:
         # Mission tracking
         self.active_mission: MissionType | None = None
         self.formation = FormationType.INDEPENDENT
+        self.comms_lost_behavior: str = "return_to_base"
 
     # ------------------------------------------------------------------
     # Command dispatch
@@ -61,27 +72,68 @@ class FleetManager:
     def dispatch_command(self, cmd: FleetCommand):
         self.active_mission = cmd.mission_type
         self.formation = cmd.formation
+        self.comms_lost_behavior = cmd.comms_lost_behavior
+
+        # --- Apply formation offsets for surface vessels ---
+        surface_cmds = [ac for ac in cmd.assets
+                        if ac.domain == DomainType.SURFACE and ac.asset_id in self.vessels]
+        formation_positions: Dict[str, Waypoint] | None = None
+        if (cmd.formation != FormationType.INDEPENDENT
+                and len(surface_cmds) >= 2
+                and surface_cmds[0].waypoints):
+            # Use leader's first waypoint as formation reference
+            leader = surface_cmds[0]
+            leader_wp = leader.waypoints[-1]  # final destination
+            leader_v = self.vessels[leader.asset_id]
+            leader_heading = (90 - math.degrees(leader_v["state"][2])) % 360
+            vessel_ids = [ac.asset_id for ac in surface_cmds]
+            formation_positions = apply_formation(
+                leader_wp.x, leader_wp.y, leader_heading,
+                vessel_ids, cmd.formation, cmd.spacing_meters,
+            )
 
         for ac in cmd.assets:
             if ac.domain == DomainType.SURFACE and ac.asset_id in self.vessels:
                 v = self.vessels[ac.asset_id]
-                # Build waypoint lists in nmi; prepend current position as wp 0
                 cur = v["state"]
+
+                # Use formation-adjusted waypoints if available
+                if formation_positions and ac.asset_id in formation_positions:
+                    fp = formation_positions[ac.asset_id]
+                    # Replace final waypoint with formation position
+                    adjusted_wps = list(ac.waypoints[:-1]) + [Waypoint(x=fp.x, y=fp.y)] if ac.waypoints else []
+                else:
+                    adjusted_wps = list(ac.waypoints)
+
+                # Build waypoint lists in nmi; prepend current position as wp 0
                 wpts_x = [cur[0] * METERS_TO_NMI]
                 wpts_y = [cur[1] * METERS_TO_NMI]
-                for wp in ac.waypoints:
+                for wp in adjusted_wps:
                     wpts_x.append(wp.x * METERS_TO_NMI)
                     wpts_y.append(wp.y * METERS_TO_NMI)
                 v["waypoints_x"] = wpts_x
                 v["waypoints_y"] = wpts_y
-                v["i_wpt"] = 1 if len(ac.waypoints) > 0 else 0
+                v["i_wpt"] = 1 if len(adjusted_wps) > 0 else 0
                 v["desired_speed"] = ac.speed
-                v["status"] = AssetStatus.EXECUTING if ac.waypoints else AssetStatus.IDLE
+                v["status"] = AssetStatus.EXECUTING if adjusted_wps else AssetStatus.IDLE
 
             elif ac.domain == DomainType.AIR and ac.asset_id == self.drone.asset_id:
-                self.drone.set_waypoints(ac.waypoints, ac.drone_pattern)
-                if ac.altitude is not None:
-                    self.drone.target_altitude = ac.altitude
+                # Use DroneCoordinator for pattern-based commands when
+                # enough waypoints are provided for the pattern type
+                use_coordinator = (
+                    ac.drone_pattern is not None
+                    and ac.waypoints
+                    and (ac.drone_pattern != DronePattern.SWEEP or len(ac.waypoints) >= 2)
+                )
+                if use_coordinator:
+                    self.drone_coordinator.assign_pattern(
+                        ac.drone_pattern, ac.waypoints,
+                        altitude=ac.altitude or 100.0,
+                    )
+                else:
+                    self.drone.set_waypoints(ac.waypoints, ac.drone_pattern)
+                    if ac.altitude is not None:
+                        self.drone.target_altitude = ac.altitude
 
     # ------------------------------------------------------------------
     # Simulation step
@@ -97,7 +149,7 @@ class FleetManager:
             wpts_y = v["waypoints_y"]
             i_wpt = v["i_wpt"]
 
-            if v["status"] == AssetStatus.EXECUTING and i_wpt > 0:
+            if v["status"] in (AssetStatus.EXECUTING, AssetStatus.RETURNING) and i_wpt > 0:
                 i_wpt = waypoint_selection(wpts_x, wpts_y, x_nmi, y_nmi, i_wpt)
                 v["i_wpt"] = i_wpt
 
@@ -173,6 +225,28 @@ class FleetManager:
             formation=self.formation,
             gps_mode=self.gps_mode,
         )
+
+    # ------------------------------------------------------------------
+    # Return to base
+    # ------------------------------------------------------------------
+    def return_to_base(self):
+        """Send all assets back to their starting positions."""
+        for vid, v in self.vessels.items():
+            home = self.home_positions[vid]
+            cur = v["state"]
+            wpts_x = [cur[0] * METERS_TO_NMI, home.x * METERS_TO_NMI]
+            wpts_y = [cur[1] * METERS_TO_NMI, home.y * METERS_TO_NMI]
+            v["waypoints_x"] = wpts_x
+            v["waypoints_y"] = wpts_y
+            v["i_wpt"] = 1
+            v["desired_speed"] = 5.0
+            v["status"] = AssetStatus.RETURNING
+
+        home_drone = self.home_positions[self.drone.asset_id]
+        self.drone.set_waypoints([home_drone], None)
+        self.drone.status = AssetStatus.RETURNING
+        self.active_mission = None
+        self.formation = FormationType.INDEPENDENT
 
     # ------------------------------------------------------------------
     # GPS mode control

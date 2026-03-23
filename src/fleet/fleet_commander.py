@@ -62,6 +62,10 @@ class FleetCommander:
         if self.logger:
             self.logger.log_gps_change(request.mode, request.noise_meters)
 
+    def return_to_base(self):
+        """Trigger comms_lost_behavior: return all assets to base."""
+        self.fleet_manager.return_to_base()
+
     def step(self, dt: float = 0.25):
         """Advance the simulation one tick."""
         self.fleet_manager.step(dt)
