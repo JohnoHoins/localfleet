@@ -1,0 +1,12 @@
+.venv/
+__pycache__/
+*.pyc
+.DS_Store
+node_modules/
+dist/
+*.egg-info/
+.env
+corall-upstream/
+data/logs/*.db
+dashboard/build/
+dashboard/dist/

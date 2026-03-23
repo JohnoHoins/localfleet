@@ -1,0 +1,850 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LocalFleet Build Bible v2.0 — Multi-Domain</title>
+<style>
+:root{--bg:#0b0f19;--s:#131a2b;--s2:#1a2336;--b:#1f2b3d;--a:#3b82f6;--a2:#22d3ee;--a3:#10b981;--w:#eab308;--r:#ef4444;--t:#cbd5e1;--td:#64748b;--tb:#f1f5f9;--p:#a78bfa}
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:var(--bg);color:var(--t);font-family:system-ui,-apple-system,sans-serif;line-height:1.7}
+.bar{position:sticky;top:0;z-index:99;background:rgba(11,15,25,.94);backdrop-filter:blur(10px);border-bottom:1px solid var(--b);padding:10px 0}
+.bar-in{max-width:1100px;margin:0 auto;padding:0 20px;display:flex;align-items:center;gap:16px;flex-wrap:wrap}
+.logo{font-family:monospace;font-weight:700;font-size:16px;color:var(--a);letter-spacing:2px}
+.logo span{color:var(--td);font-weight:400}
+.ver{font-family:monospace;font-size:10px;color:var(--bg);background:var(--a3);padding:2px 6px;border-radius:3px;margin-left:6px}
+nav{display:flex;gap:3px;flex-wrap:wrap}
+nav button{background:0;border:1px solid transparent;color:var(--td);font-size:12px;font-weight:500;padding:5px 10px;border-radius:5px;cursor:pointer;transition:.2s}
+nav button:hover{color:var(--t);background:var(--s)}
+nav button.on{color:var(--a);background:var(--s);border-color:var(--b)}
+.c{max-width:1100px;margin:0 auto;padding:28px 20px 80px}
+section{display:none}section.v{display:block;animation:fi .25s}
+@keyframes fi{from{opacity:0;transform:translateY(6px)}to{opacity:1}}
+h2{font-size:26px;font-weight:700;color:var(--tb);margin-bottom:16px;padding-bottom:10px;border-bottom:1px solid var(--b)}
+h3{font-size:18px;font-weight:600;color:var(--a2);margin:24px 0 10px}
+h4{font-size:15px;font-weight:600;color:var(--a);margin:18px 0 6px}
+p{margin-bottom:12px}
+.card{background:var(--s);border:1px solid var(--b);border-radius:8px;padding:20px;margin-bottom:12px}
+.card:hover{border-color:rgba(59,130,246,.25)}
+.ca{border-left:3px solid var(--a)}
+.cg{border-left:3px solid var(--a3)}
+.cw{border-left:3px solid var(--w)}
+.cr{border-left:3px solid var(--r)}
+.cp{border-left:3px solid var(--p)}
+.ct{font-weight:600;font-size:15px;color:var(--tb);margin-bottom:6px}
+.g2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.g3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px}
+@media(max-width:768px){.g2,.g3{grid-template-columns:1fr}}
+.code{background:var(--s2);border:1px solid var(--b);border-radius:5px;padding:14px;font-family:monospace;font-size:12.5px;color:var(--a2);overflow-x:auto;margin:10px 0;line-height:1.5;white-space:pre-wrap}
+.tag{display:inline-block;background:rgba(59,130,246,.12);color:var(--a);font-size:10px;font-weight:700;padding:2px 7px;border-radius:3px;font-family:monospace;margin-right:4px;margin-bottom:3px}
+.tg{background:rgba(16,185,129,.12);color:var(--a3)}
+.tw{background:rgba(234,179,8,.12);color:var(--w)}
+.tr{background:rgba(239,68,68,.12);color:var(--r)}
+.tp{background:rgba(167,139,250,.12);color:var(--p)}
+ul{padding-left:18px;margin-bottom:12px}li{margin-bottom:5px}li::marker{color:var(--a)}
+ol{padding-left:18px;margin-bottom:12px}ol li{margin-bottom:8px}
+strong{color:var(--tb)}
+.q{border-left:3px solid var(--a);padding:14px 18px;margin:14px 0;background:rgba(59,130,246,.04);border-radius:0 6px 6px 0;font-style:italic}
+.co{background:linear-gradient(135deg,rgba(59,130,246,.07),rgba(34,211,238,.07));border:1px solid rgba(59,130,246,.18);border-radius:8px;padding:16px 20px;margin:16px 0}
+.col{font-family:monospace;font-weight:700;font-size:12px;color:var(--a);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px}
+.tree{font-family:monospace;font-size:12.5px;line-height:1.8;color:var(--a2);background:var(--s2);border:1px solid var(--b);border-radius:5px;padding:16px;margin:12px 0;white-space:pre;overflow-x:auto}
+.phase{display:inline-block;padding:3px 10px;border-radius:4px;font-size:11px;font-weight:700;font-family:monospace;letter-spacing:.5px}
+.p1{background:rgba(234,179,8,.15);color:var(--w)}
+.p2{background:rgba(59,130,246,.15);color:var(--a)}
+.p3{background:rgba(16,185,129,.15);color:var(--a3)}
+.p4{background:rgba(167,139,250,.15);color:var(--p)}
+.p5{background:rgba(239,68,68,.15);color:var(--r)}
+.wk{background:var(--s);border:1px solid var(--b);border-radius:6px;padding:14px;margin-bottom:8px}
+.wn{font-family:monospace;font-size:11px;font-weight:700;color:var(--a);letter-spacing:1px;margin-bottom:5px}
+.cl{list-style:none;padding:0}.cl li{padding:6px 0 6px 24px;position:relative;border-bottom:1px solid var(--b);font-size:14px}.cl li:last-child{border:0}.cl li::before{content:'☐';position:absolute;left:0;color:var(--a)}
+.risk{background:rgba(239,68,68,.06);border:1px solid rgba(239,68,68,.2);border-radius:8px;padding:16px 20px;margin:16px 0}
+.risk-t{font-family:monospace;font-weight:700;font-size:12px;color:var(--r);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px}
+.new{background:rgba(167,139,250,.06);border:1px solid rgba(167,139,250,.2);border-radius:8px;padding:16px 20px;margin:16px 0}
+.new-t{font-family:monospace;font-weight:700;font-size:12px;color:var(--p);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px}
+</style>
+</head>
+<body>
+
+<div class="bar"><div class="bar-in">
+<div class="logo">LOCALFLEET <span>// build bible</span> <span class="ver">v2.0 MULTI-DOMAIN</span></div>
+<nav id="nav">
+<button class="on" data-t="arch">Architecture</button>
+<button data-t="whyhavoc">Why This Wins</button>
+<button data-t="env">Environment</button>
+<button data-t="files">File System</button>
+<button data-t="phases">Build Phases</button>
+<button data-t="risks">Risks & Guard Rails</button>
+<button data-t="ref">Reference</button>
+</nav>
+</div></div>
+
+<div class="c">
+
+<!-- ==================== ARCHITECTURE ==================== -->
+<section id="arch" class="v">
+<h2>Architecture — Multi-Domain Collaborative Autonomy</h2>
+
+<div class="new"><div class="new-t">🚀 What Changed in v2.0</div>
+<p>On March 11, 2026, HavocAI acquired <strong>Mavrik</strong> (military drones) and <strong>Teleo</strong> (supervised ground autonomy). They executed the world's first GPS-denied air-sea autonomy mission in Portugal in December 2025. HavocAI is no longer a maritime company — they are an <strong>all-domain collaborative autonomy</strong> company. Your project now reflects that reality.</p>
+<p>v2.0 adds: <strong>a simulated drone asset</strong> alongside surface vessels, <strong>cross-domain natural language C2</strong>, and a <strong>GPS-denied degraded mode</strong>. Same 14-week timeline. Same M3 Ultra. Dramatically more impressive.</p>
+</div>
+
+<h3>The Core Insight: Multi-Domain C2 via Local LLM</h3>
+
+<p><strong>CORALL</strong> (github.com/Klins101/CORALL) remains your maritime simulation foundation — MIT-licensed, peer-reviewed, with working vessel dynamics, CPA/TCPA risk assessment, 22 Imazu test scenarios, and COLREGS decision-making. Pure Python, no ROS dependency.</p>
+
+<p><strong>The upgrade:</strong> you add a lightweight drone agent model (simple 2D+altitude waypoint follower) and extend everything — the schemas, the fleet manager, the LLM parser, the dashboard — to handle <strong>both</strong> surface vessels and aerial assets through <strong>one unified command interface</strong>. This is exactly what HavocAI demonstrated in Portugal and what their Mavrik acquisition is trying to scale.</p>
+
+<div class="co"><div class="col">⚡ Your Strategic Advantage — v2.0</div>
+<p>CORALL uses cloud APIs → you make it <strong>fully air-gapped via Ollama</strong>. CORALL is single-vessel → you extend to <strong>multi-asset fleet coordination</strong>. CORALL is maritime-only → you add <strong>cross-domain air+sea</strong>. CORALL uses matplotlib → you build a <strong>real-time React C2 dashboard</strong>. And the coup de grace: <strong>GPS-denied mode</strong> that degrades position accuracy and shows resilient autonomous behavior — mirroring HavocAI's most impressive public demo. All running locally on consumer hardware.</p>
+</div>
+
+<h3>System Architecture</h3>
+
+<div class="code">┌──────────────────────────────────────────────────────────────────┐
+│                      OPERATOR INTERFACE                          │
+│  ┌──────────┐  ┌───────────┐  ┌───────────────────────────┐    │
+│  │  Voice   │  │  Text     │  │     React Dashboard       │    │
+│  │ (Whisper)│  │  (CLI)    │  │  (Leaflet + D3 + Icons)   │    │
+│  └────┬─────┘  └─────┬─────┘  │  🚢 Surface vessels       │    │
+│       └───────────┬───┘        │  ✈  Aerial drones        │    │
+│              ┌────▼──────┐     │  📡 GPS-denied toggle     │    │
+│              │ LOCAL LLM │◄────┘                           │    │
+│              │ Ollama    │  (status feedback)              │    │
+│              │ 70B model │                                 │    │
+│              └────┬──────┘                                 │    │
+│              ┌────▼─────────────────────┐                  │    │
+│              │ Fleet Commander          │ ← MULTI-DOMAIN   │    │
+│              │ NL → AssetCommand[]      │                  │    │
+│              │ Parses surface + air     │                  │    │
+│              │ domain-aware routing     │                  │    │
+│              └────┬─────────────────────┘                  │    │
+├───────────────────┼────────────────────────────────────────┤    │
+│            FLEET COORDINATION LAYER                         │    │
+│  ┌────────────────▼──────────────────────────────────┐     │    │
+│  │ Fleet Manager                                      │     │    │
+│  │ • Asset registry (vessels + drones)                │     │    │
+│  │ • Domain-aware state tracking                      │     │    │
+│  │ • Formation management (surface formations)        │     │    │
+│  │ • Cross-domain task allocation                     │     │    │
+│  │ • GPS-denied degradation engine                    │     │    │
+│  └──┬──────────┬──────────┬──────────┬───────────────┘     │    │
+├─────┼──────────┼──────────┼──────────┼─────────────────────┤    │
+│     │ SURFACE  │ SURFACE  │ SURFACE  │ AIR DOMAIN          │    │
+│  ┌──▼─────┐┌──▼─────┐┌──▼─────┐ ┌──▼──────────────┐     │    │
+│  │Vessel  ││Vessel  ││Vessel  │ │ Drone            │     │    │
+│  │Alpha   ││Bravo   ││Charlie │ │ Eagle-1          │     │    │
+│  │        ││        ││        │ │                   │     │    │
+│  │dynamics││dynamics││dynamics│ │ drone_dynamics.py │     │    │
+│  │risk    ││risk    ││risk    │ │ (2D + altitude)   │     │    │
+│  │colregs ││colregs ││colregs │ │ waypoint follower │     │    │
+│  │control ││control ││control │ │                   │     │    │
+│  │CORALL  ││CORALL  ││CORALL  │ │ YOUR NEW CODE     │     │    │
+│  └────────┘└────────┘└────────┘ └───────────────────┘     │    │
+│                                                            │    │
+│  ┌──────────────────────────────────────────────────┐     │    │
+│  │ GPS-Denied Engine (src/utils/gps_denied.py)      │     │    │
+│  │ Adds configurable noise + reduces update rate     │     │    │
+│  │ Toggleable from dashboard                         │     │    │
+│  └──────────────────────────────────────────────────┘     │    │
+│                                                            │    │
+│  ┌──────────────────────────────────────────────────┐     │    │
+│  │ WebSocket Server (FastAPI)                        │     │    │
+│  │ Streams FleetState → React dashboard at 4Hz       │     │    │
+│  └──────────────────────────────────────────────────┘     │    │
+└────────────────────────────────────────────────────────────┘</div>
+
+<h3>What Comes From CORALL (Don't Rewrite)</h3>
+<div class="g2">
+<div class="card cg"><div class="ct">✅ Vessel Dynamics</div><p><code>src/dynamics/vessel_dynamics.py</code> — Nonlinear marine vessel model with realistic physics. Peer-reviewed, published.</p></div>
+<div class="card cg"><div class="ct">✅ Controller</div><p><code>src/dynamics/controller.py</code> — Low-level vessel control for waypoint tracking and heading management.</p></div>
+<div class="card cg"><div class="ct">✅ CPA/TCPA Risk Assessment</div><p><code>src/risk_assessment/</code> — Closest Point of Approach and Time to CPA calculations. Collision risk detection.</p></div>
+<div class="card cg"><div class="ct">✅ COLREGS Decision Logic</div><p><code>src/decision_making/</code> — Rules 7, 8, 13-17. Give-way/stand-on classification.</p></div>
+<div class="card cg"><div class="ct">✅ Imazu Test Scenarios</div><p><code>src/utils/imazu_cases.py</code> — 22 standardized encounter scenarios.</p></div>
+<div class="card cg"><div class="ct">✅ Simulation Core</div><p><code>src/core/simulation.py</code> — Main simulation loop with numerical integration.</p></div>
+</div>
+
+<h3>What YOU Build (The Differentiators)</h3>
+<div class="g2">
+<div class="card ca"><div class="ct">🔨 Local LLM Integration</div><p>Replace cloud API calls with Ollama. Run Qwen 72B locally on your M3 Ultra. Zero internet. Defense-grade air-gapped inference.</p></div>
+<div class="card ca"><div class="ct">🔨 Fleet Commander — Multi-Domain</div><p>Parses natural language into commands for BOTH surface vessels AND drones. "Alpha patrol the harbor, Eagle recon from altitude" → structured cross-domain commands.</p></div>
+<div class="card ca"><div class="ct">🔨 Fleet Manager — Multi-Domain</div><p>Orchestrates surface + air assets. Domain-aware state tracking. Cross-domain task allocation. Formation management for surface; altitude/orbit management for air.</p></div>
+<div class="card cp"><div class="ct">🆕 Drone Agent Model</div><p>Simple but effective: position (x,y), altitude, heading, speed, waypoint following. Not full flight dynamics — just enough to show an aerial asset coordinating with surface vessels on the same map.</p></div>
+<div class="card cp"><div class="ct">🆕 GPS-Denied Degradation Engine</div><p>Toggle that adds configurable position noise, reduces update frequency, and triggers autonomous fallback behaviors. Mirrors HavocAI's Portugal demo capability.</p></div>
+<div class="card ca"><div class="ct">🔨 React Dashboard — Multi-Domain</div><p>Leaflet map with distinct icons for vessels (🚢) and drones (✈). GPS-denied toggle. Asset cards show domain-specific data. Voice/text command panel.</p></div>
+<div class="card ca"><div class="ct">🔨 Voice Input</div><p>Local Whisper (mlx-whisper on Apple Silicon). Full pipeline: speak → text → LLM → multi-domain commands → assets move.</p></div>
+<div class="card ca"><div class="ct">🔨 Mission Logging + Replay</div><p>SQLite database storing every command, asset state, and decision across all domains.</p></div>
+</div>
+
+</section>
+
+<!-- ==================== WHY THIS WINS ==================== -->
+<section id="whyhavoc">
+<h2>Why This Wins — HavocAI Alignment Analysis</h2>
+
+<div class="co"><div class="col">🎯 What HavocAI Did in 2025-2026</div>
+<p>December 2025: Executed world's first GPS-denied air-sea autonomy mission in Troia, Portugal. Autonomous surface vessels + UAVs coordinated through a single operator interface. Ukrainian military officials observed. March 2026: Acquired <strong>Mavrik</strong> (military drones — Group 1 and Group 3 UAVs) and <strong>Teleo</strong> (supervised autonomy for heavy ground machinery). Also partnered with SAIC for CJADC2 integration. Their entire trajectory screams: <strong>multi-domain, single-operator, contested environments</strong>.</p>
+</div>
+
+<h3>Point-by-Point Alignment</h3>
+
+<div class="card cg">
+<div class="ct">✅ Multi-Domain C2 → You demonstrate air+sea</div>
+<p>Their biggest strategic move in 2026 was acquiring air and land capabilities. Your project shows surface vessels AND a drone operating from one interface. You're building the prototype of their future.</p>
+</div>
+
+<div class="card cg">
+<div class="ct">✅ Natural Language Fleet Command → You built Havoc Orchestrator locally</div>
+<p>Their "Havoc Orchestrator" product uses LLMs for natural language fleet command. You build the same concept running 100% on local hardware. Shows you understand their product direction AND the ITAR compliance constraint.</p>
+</div>
+
+<div class="card cg">
+<div class="ct">✅ GPS-Denied Operations → You simulate degraded environments</div>
+<p>Their Portugal demo was GPS-denied. Your GPS-denied toggle shows you understand why this matters and can think about resilience in contested environments.</p>
+</div>
+
+<div class="card cg">
+<div class="ct">✅ Air-Gapped / ITAR → Everything runs locally</div>
+<p>Defense data cannot leave the machine. Your entire stack — LLM, speech-to-text, simulation, dashboard — runs on your M3 Ultra with zero internet. This isn't just a feature, it's a requirement in their world.</p>
+</div>
+
+<div class="card cg">
+<div class="ct">✅ Single Operator, Multiple Assets → Your core UX</div>
+<p>HavocAI's pitch is "one person commands thousands of assets." Your demo shows one person commanding 3 vessels + 1 drone through natural language. Same principle, approachable scale.</p>
+</div>
+
+<div class="card cw">
+<div class="ct">⚡ What Makes You Different From a CS Grad</div>
+<p>You run a 70-person hockey camp business. You understand operations, logistics, coordinating people under time pressure. CS grads write code. You think like an operator — someone who has to manage multiple moving parts with incomplete information and real consequences. That operator mindset is exactly who builds good C2 interfaces. Your dashboard shouldn't just display data — it should be designed by someone who understands what a commander actually needs to see. Lean into this.</p>
+</div>
+
+<div class="card cw">
+<div class="ct">⚡ What Would Impress Paul Lwin Personally</div>
+<p>Paul Lwin flew Navy aircraft. He was the human in the loop coordinating with surface forces. Then he got a CS degree from Johns Hopkins and an MBA from Yale. He lives at the intersection of operations and technology. Your demo video should show you speaking tactical commands in plain English and watching multi-domain assets respond. That's his vision. That's what he built a company to achieve. And you built a version of it in your bedroom on a Mac Studio at age 21.</p>
+</div>
+
+<h3>Their Tech Stack vs Yours</h3>
+<div class="card ca">
+<div class="ct">HavocAI's Required Skills (from job postings)</div>
+<p>C++, Python, Rust, Linux, ROS2, PX4/ArduPilot. Your project uses Python and JavaScript — you won't match their C++/Rust requirements. <strong>That's fine.</strong> You're not applying as a senior software engineer. You're applying as someone who understands autonomous systems, can build working prototypes, and thinks at the system level. The code is the vehicle, not the destination.</p>
+</div>
+</section>
+
+<!-- ==================== ENVIRONMENT ==================== -->
+<section id="env">
+<h2>Development Environment Setup — M3 Ultra</h2>
+
+<h3>Prerequisites Check</h3>
+<div class="code"># Verify your Mac Studio specs
+system_profiler SPHardwareDataType
+# Should show: Apple M3 Ultra, 256 GB Memory
+
+# Verify Xcode CLI tools
+xcode-select -p
+# If not installed: xcode-select --install
+
+# Verify Homebrew
+brew --version
+# If not installed: /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"</div>
+
+<h3>Step 1: Python Environment (CRITICAL — Do This First)</h3>
+<div class="co"><div class="col">🚨 Golden Rule</div>
+<p>NEVER install project dependencies into system Python. Always use a virtual environment. This prevents dependency hell and ensures reproducibility.</p>
+</div>
+
+<div class="code"># Install Python 3.11+ via Homebrew
+brew install python@3.11
+
+# Create project directory
+mkdir -p ~/Projects/localfleet
+cd ~/Projects/localfleet
+
+# Create virtual environment
+python3.11 -m venv .venv
+
+# Activate it (do this EVERY time you work on the project)
+source .venv/bin/activate
+
+# Verify
+which python  # should show ~/Projects/localfleet/.venv/bin/python
+python --version  # should show 3.11.x</div>
+
+<h3>Step 2: Install Ollama + Pull Models</h3>
+<div class="code"># Install Ollama
+brew install ollama
+
+# Start Ollama service
+ollama serve &
+
+# Pull models — your M3 Ultra handles these easily
+ollama pull qwen2.5:72b         # Best at structured output (primary)
+ollama pull llama3:70b          # Great general reasoning (backup)
+ollama pull mistral-small       # Fast iteration fallback
+
+# Test it works
+curl http://localhost:11434/api/generate -d '{
+  "model": "qwen2.5:72b",
+  "prompt": "Respond with valid JSON: {\"status\": \"ok\"}",
+  "stream": false
+}'</div>
+
+<h3>Step 3: Clone and Set Up CORALL</h3>
+<div class="code"># Clone CORALL into your project
+cd ~/Projects/localfleet
+git clone https://github.com/Klins101/CORALL.git corall-upstream
+
+# Install CORALL dependencies
+pip install numpy matplotlib scipy
+
+# Install transition deps (we replace these with Ollama later)
+pip install openai anthropic
+
+# Test CORALL baseline (no LLM)
+cd corall-upstream
+python main.py --case_number 1 --no_animation --llm 0
+# Should produce output without errors
+cd ..</div>
+
+<h3>Step 4: Install All Project Dependencies</h3>
+<div class="code"># Backend
+pip install fastapi uvicorn websockets   # API + WebSocket server
+pip install httpx                         # For Ollama HTTP calls
+pip install aiosqlite                     # Async SQLite for logging
+pip install pydantic                      # Data validation (critical)
+pip install ollama                        # Official Ollama Python client
+pip install instructor                    # Structured output helper
+
+# Voice
+pip install mlx-whisper                   # Apple Silicon optimized Whisper
+# OR fallback: pip install openai-whisper
+
+# Frontend tooling
+brew install node
+npm install -g pnpm</div>
+
+<h3>Step 5: Initialize Git Repo</h3>
+<div class="code">cd ~/Projects/localfleet
+git init
+git branch -m main
+
+cat > .gitignore << 'EOF'
+.venv/
+__pycache__/
+*.pyc
+.DS_Store
+node_modules/
+dist/
+*.egg-info/
+.env
+corall-upstream/
+data/logs/*.db
+dashboard/build/
+dashboard/dist/
+EOF
+
+git add .gitignore
+git commit -m "init: project structure with gitignore"
+
+# After creating GitHub repo:
+# git remote add origin https://github.com/YOUR_USERNAME/localfleet.git
+# git push -u origin main</div>
+
+<h3>Step 6: Verify Everything Works</h3>
+<div class="code"># Run each — ALL must succeed before writing any code
+python --version                    # 3.11+
+ollama list                         # shows qwen2.5:72b
+node --version                      # 18+ or 20+
+git status                          # clean working tree
+python -c "import numpy; print(numpy.__version__)"    # no error
+python -c "import fastapi; print('FastAPI OK')"       # no error
+python -c "import pydantic; print('Pydantic OK')"     # no error
+python -c "import ollama; print('Ollama pkg OK')"     # no error
+curl http://localhost:11434/api/tags                    # Ollama responds</div>
+
+<div class="risk"><div class="risk-t">🚨 Environment Checkpoint</div>
+<p>Do NOT proceed to writing any project code until every command above works. Environment issues that surface later cost 10x the time. Get this right once.</p>
+</div>
+</section>
+
+<!-- ==================== FILE SYSTEM ==================== -->
+<section id="files">
+<h2>Project File System — Complete Structure</h2>
+
+<div class="tree">localfleet/
+├── .venv/                          # Python virtual environment (gitignored)
+├── .gitignore
+├── README.md                       # Project overview + demo GIF
+├── pyproject.toml                  # Python project metadata + deps
+├── Makefile                        # Common commands (run, test, demo)
+│
+├── corall-upstream/                # Original CORALL clone (gitignored, reference only)
+│
+├── src/                            # ALL Python source code
+│   ├── __init__.py
+│   ├── schemas.py                  # 🔑 THE source of truth — all data types
+│   │
+│   ├── core/                       # FROM CORALL (adapted for multi-asset)
+│   │   ├── __init__.py
+│   │   ├── simulation.py           # Main sim loop — runs surface + air assets
+│   │   └── integration.py          # Numerical integration (unchanged)
+│   │
+│   ├── dynamics/                   # FROM CORALL + drone extension
+│   │   ├── __init__.py
+│   │   ├── vessel_dynamics.py      # Nonlinear vessel model (FROM CORALL)
+│   │   ├── controller.py           # Waypoint tracking (FROM CORALL)
+│   │   ├── actuator_modeling.py    # Thruster/rudder models (FROM CORALL)
+│   │   └── drone_dynamics.py       # 🆕 Simple 2D+altitude drone model
+│   │
+│   ├── navigation/                 # FROM CORALL (unchanged)
+│   │   ├── __init__.py
+│   │   ├── planning.py
+│   │   ├── obstacle_sim.py
+│   │   └── reactive_avoidance.py
+│   │
+│   ├── risk_assessment/            # FROM CORALL (unchanged)
+│   │   ├── __init__.py
+│   │   ├── cpa_calculations.py
+│   │   └── risk_calculations.py
+│   │
+│   ├── decision_making/            # FROM CORALL (adapted)
+│   │   ├── __init__.py
+│   │   ├── decision_making.py      # Baseline non-LLM decisions (FROM CORALL)
+│   │   └── decision_llm_local.py   # 🔨 YOUR NEW: Local Ollama integration
+│   │
+│   ├── fleet/                      # 🔨 YOUR NEW: Multi-domain coordination
+│   │   ├── __init__.py
+│   │   ├── fleet_manager.py        # Registry, state, formations — surface + air
+│   │   ├── fleet_commander.py      # NL → multi-domain mission parsing
+│   │   ├── formations.py           # Surface formations (echelon, line, spread)
+│   │   ├── task_allocator.py       # Cross-domain task assignment
+│   │   └── drone_coordinator.py    # 🆕 Air asset orbit/sweep patterns
+│   │
+│   ├── llm/                        # 🔨 YOUR NEW: Local LLM interface
+│   │   ├── __init__.py
+│   │   ├── ollama_client.py        # HTTP client for local Ollama
+│   │   ├── prompts.py              # All prompt templates (system + user)
+│   │   └── parser.py               # Parse LLM output → structured commands
+│   │
+│   ├── voice/                      # 🔨 YOUR NEW: Speech input
+│   │   ├── __init__.py
+│   │   └── whisper_local.py        # mlx-whisper integration
+│   │
+│   ├── api/                        # 🔨 YOUR NEW: Backend API
+│   │   ├── __init__.py
+│   │   ├── server.py               # FastAPI app + WebSocket
+│   │   ├── routes.py               # REST endpoints
+│   │   └── ws.py                   # WebSocket handler for live state
+│   │
+│   ├── logging/                    # 🔨 YOUR NEW: Mission logging
+│   │   ├── __init__.py
+│   │   ├── mission_logger.py       # SQLite logging
+│   │   └── replay.py               # Replay from logs
+│   │
+│   └── utils/                      # FROM CORALL + extended
+│       ├── __init__.py
+│       ├── imazu_cases.py          # 22 test scenarios (FROM CORALL)
+│       ├── config.py               # Global config management
+│       └── gps_denied.py           # 🆕 GPS degradation engine
+│
+├── dashboard/                      # 🔨 YOUR NEW: React frontend
+│   ├── package.json
+│   ├── vite.config.js
+│   ├── index.html
+│   ├── src/
+│   │   ├── App.jsx                 # Main app component
+│   │   ├── main.jsx                # Entry point
+│   │   ├── components/
+│   │   │   ├── FleetMap.jsx        # Leaflet map — vessels + drone icons
+│   │   │   ├── CommandPanel.jsx    # Text/voice command input
+│   │   │   ├── AssetCard.jsx       # Asset status (domain-aware)
+│   │   │   ├── MissionLog.jsx      # Live event log
+│   │   │   ├── RiskIndicator.jsx   # CPA/TCPA visualization
+│   │   │   └── GpsDeniedToggle.jsx # 🆕 GPS mode switch
+│   │   ├── hooks/
+│   │   │   └── useWebSocket.js     # WebSocket connection hook
+│   │   └── styles/
+│   │       └── global.css          # Tailwind + dark C2 theme
+│   └── public/
+│       ├── vessel-icon.svg
+│       └── drone-icon.svg          # 🆕
+│
+├── data/
+│   ├── logs/                       # SQLite mission logs (gitignored)
+│   └── scenarios/
+│       ├── harbor_patrol.json
+│       ├── escort_formation.json
+│       ├── search_pattern.json
+│       └── air_sea_recon.json      # 🆕 Cross-domain scenario
+│
+├── scripts/
+│   ├── run_demo.sh                 # One-command full demo launch
+│   ├── record_demo.sh              # Screen record helper
+│   └── setup_env.sh                # Fresh environment setup
+│
+├── tests/
+│   ├── test_schemas.py             # Validate all data contracts
+│   ├── test_ollama_client.py       # LLM connection + parsing
+│   ├── test_fleet_manager.py       # Multi-domain coordination
+│   ├── test_drone_dynamics.py      # 🆕 Drone model
+│   ├── test_parser.py              # NL → command parsing
+│   ├── test_gps_denied.py          # 🆕 Degradation engine
+│   └── test_simulation.py          # End-to-end sim test
+│
+└── docs/
+    ├── ARCHITECTURE.md
+    ├── CORALL_CHANGES.md
+    └── DEMO_SCRIPT.md              # Exact script for 3-min demo video</div>
+
+<h3>File Naming Conventions</h3>
+<ul>
+<li>Python files: <code>snake_case.py</code></li>
+<li>React components: <code>PascalCase.jsx</code></li>
+<li>Config/data: <code>snake_case.json</code></li>
+<li>Directories: <code>lowercase/</code></li>
+<li>Constants: <code>UPPER_SNAKE_CASE</code></li>
+</ul>
+
+<h3>The Makefile</h3>
+<div class="code">.PHONY: sim api dashboard demo test clean
+
+sim:
+	cd src && python -m core.simulation --assets 4 --scenario air_sea_recon
+
+api:
+	cd src && uvicorn api.server:app --reload --port 8000
+
+dashboard:
+	cd dashboard && pnpm dev
+
+demo:
+	@echo "Starting Ollama..."
+	@ollama serve &>/dev/null &
+	@sleep 2
+	@echo "Starting backend..."
+	@cd src && uvicorn api.server:app --port 8000 &
+	@sleep 1
+	@echo "Starting dashboard..."
+	@cd dashboard && pnpm dev &
+	@echo "✅ LocalFleet running at http://localhost:5173"
+
+test:
+	python -m pytest tests/ -v
+
+clean:
+	rm -rf data/logs/*.db
+	rm -rf dashboard/dist/
+	find . -type d -name __pycache__ -exec rm -rf {} +</div>
+</section>
+
+<!-- ==================== BUILD PHASES ==================== -->
+<section id="phases">
+<h2>Build Phases — Week by Week</h2>
+
+<div class="co"><div class="col">🎯 The One Rule</div>
+<p>Every phase ends with a <strong>working demo you can screen-record</strong>. If you can't show it, it doesn't count. Record a 30-second clip at the end of every phase.</p>
+</div>
+
+<h3><span class="phase p1">PHASE 1</span> Foundation — Weeks 1-3</h3>
+<p><strong>Goal:</strong> CORALL running locally, Ollama integration working, single vessel responds to natural language, drone agent model exists.</p>
+
+<div class="wk"><div class="wn">WEEK 1: Environment + CORALL Baseline</div>
+<ul class="cl">
+<li>Complete ALL environment setup from the Environment tab</li>
+<li>Clone CORALL, run baseline simulation (--llm 0) successfully</li>
+<li>Read through CORALL source: simulation.py, vessel_dynamics.py, decision_making.py</li>
+<li>Create your localfleet repo with the complete file structure from File System tab</li>
+<li>Copy CORALL modules into your structure (core, dynamics, navigation, risk_assessment, decision_making, utils)</li>
+<li>Write src/schemas.py BY HAND — copy from Coding Playbook Data Contracts tab</li>
+<li>Verify copied code still runs from your new structure</li>
+<li>First git commit: "init: project structure with schemas and CORALL baseline"</li>
+</ul></div>
+
+<div class="wk"><div class="wn">WEEK 2: Local LLM Integration</div>
+<ul class="cl">
+<li>Create src/llm/ollama_client.py — HTTP client wrapper for Ollama</li>
+<li>Create src/llm/prompts.py — system prompts for multi-domain command parsing</li>
+<li>Create src/decision_making/decision_llm_local.py — replace cloud calls with Ollama</li>
+<li>Run CORALL simulation with LOCAL LLM making COLREGS decisions</li>
+<li>Test with Qwen 72B and Llama 3 70B — compare response quality</li>
+<li>Benchmark: LLM response should be under 3 seconds on M3 Ultra</li>
+<li>Git commit: "feat: local LLM integration via Ollama"</li>
+</ul></div>
+
+<div class="wk"><div class="wn">WEEK 3: Fleet Commander + Drone Agent Model</div>
+<ul class="cl">
+<li>Create src/llm/parser.py — parse LLM output into structured AssetCommand objects</li>
+<li>Create src/fleet/fleet_commander.py — NL → multi-domain commands (surface + air)</li>
+<li>Create src/dynamics/drone_dynamics.py — simple 2D+altitude waypoint follower</li>
+<li>Test drone model: give it waypoints, verify it moves smoothly in 2D+altitude</li>
+<li>Test fleet commander with 20+ commands including cross-domain: "Alpha patrol harbor, Eagle sweep from altitude"</li>
+<li>Handle edge cases: ambiguous commands, unknown asset names, mixed domain requests</li>
+<li>Git commit: "feat: multi-domain fleet commander + drone agent"</li>
+<li><strong>🎬 Phase 1 Demo:</strong> Type "Send Alpha to patrol, launch Eagle for aerial recon" → LLM parses → JSON shows surface + air commands. 30 seconds.</li>
+</ul></div>
+
+<h3><span class="phase p2">PHASE 2</span> Multi-Asset Fleet — Weeks 4-7</h3>
+<p><strong>Goal:</strong> 3 vessels + 1 drone running simultaneously, coordinated by fleet manager, formations working.</p>
+
+<div class="wk"><div class="wn">WEEK 4: Fleet Manager — Multi-Domain</div>
+<ul class="cl">
+<li>Create src/fleet/fleet_manager.py — asset registry handling both domains</li>
+<li>Refactor simulation.py to run multiple CORALL vessel instances + drone instance in parallel</li>
+<li>Each surface vessel = own CORALL dynamics/controller/risk instance</li>
+<li>Drone = drone_dynamics.py instance (separate physics, same fleet manager)</li>
+<li>Verify 3 vessels + 1 drone can run independently in the same simulation</li>
+<li>Git commit: "feat: multi-domain simulation engine"</li>
+</ul></div>
+
+<div class="wk"><div class="wn">WEEK 5: Formations + Cross-Domain Coordination</div>
+<ul class="cl">
+<li>Create src/fleet/formations.py — echelon, line abreast, spread, column (surface only)</li>
+<li>Create src/fleet/drone_coordinator.py — orbit, sweep, and track patterns for drone</li>
+<li>Create src/fleet/task_allocator.py — cross-domain mission assignment</li>
+<li>Implement patrol: surface vessels follow waypoint circuit in formation</li>
+<li>Implement aerial recon: drone sweeps designated sector at altitude</li>
+<li>Implement coordinated mission: surface patrol + aerial overwatch simultaneously</li>
+<li>Inter-vessel collision avoidance (CORALL COLREGS between own vessels)</li>
+<li>Git commit: "feat: formations + cross-domain coordination"</li>
+</ul></div>
+
+<div class="wk"><div class="wn">WEEK 6: FastAPI Backend + WebSocket</div>
+<ul class="cl">
+<li>Create src/api/server.py — FastAPI app with CORS</li>
+<li>Create src/api/ws.py — WebSocket streaming FleetState at 4Hz</li>
+<li>Create src/api/routes.py — POST /command, GET /assets, GET /mission, POST /gps-denied</li>
+<li>Wire: command → fleet_commander → fleet_manager → simulation → WebSocket</li>
+<li>Test with curl and wscat</li>
+<li>Git commit: "feat: FastAPI backend with WebSocket"</li>
+</ul></div>
+
+<div class="wk"><div class="wn">WEEK 7: Integration + GPS-Denied Engine</div>
+<ul class="cl">
+<li>End-to-end: NL command via API → assets move → state streams via WebSocket</li>
+<li>Create src/utils/gps_denied.py — adds position noise, reduces update rate</li>
+<li>Create src/logging/mission_logger.py — log all events to SQLite</li>
+<li>Add error handling: bad LLM output, out-of-bounds assets, connection drops</li>
+<li>Write tests: test_fleet_manager.py, test_drone_dynamics.py, test_gps_denied.py</li>
+<li>Git commit: "feat: GPS-denied mode + end-to-end pipeline"</li>
+<li><strong>🎬 Phase 2 Demo:</strong> 3 vessels + drone responding to commands, GPS-denied toggle. 60 seconds.</li>
+</ul></div>
+
+<h3><span class="phase p3">PHASE 3</span> Dashboard + Voice — Weeks 8-11</h3>
+<p><strong>Goal:</strong> Professional React dashboard, voice commands, multi-domain visualization.</p>
+
+<div class="wk"><div class="wn">WEEK 8-9: React Dashboard — Multi-Domain</div>
+<ul class="cl">
+<li>Initialize: cd dashboard && pnpm create vite . --template react</li>
+<li>Install: pnpm add leaflet react-leaflet d3 tailwindcss</li>
+<li>Build FleetMap.jsx — Leaflet map with DIFFERENT icons for vessels vs drones</li>
+<li>Build CommandPanel.jsx — text input + future voice button</li>
+<li>Build AssetCard.jsx — domain-aware status cards (surface shows speed/heading, air shows altitude)</li>
+<li>Build GpsDeniedToggle.jsx — switch that POSTs to /gps-denied endpoint</li>
+<li>Build useWebSocket.js — connects to WS, updates React state</li>
+<li>Dark military C2 theme: #0b0f19 background, clean, professional</li>
+<li>Git commit: "feat: multi-domain React dashboard"</li>
+</ul></div>
+
+<div class="wk"><div class="wn">WEEK 10: Voice Input</div>
+<ul class="cl">
+<li>Create src/voice/whisper_local.py — record + transcribe with mlx-whisper</li>
+<li>Add mic button to CommandPanel.jsx — press to talk</li>
+<li>Pipeline: press → record → Whisper → text → /command → LLM → assets move</li>
+<li>Test 10+ voice commands including cross-domain orders</li>
+<li>Git commit: "feat: voice commands via local Whisper"</li>
+</ul></div>
+
+<div class="wk"><div class="wn">WEEK 11: Replay + Polish</div>
+<ul class="cl">
+<li>Create src/logging/replay.py — play back from SQLite logs</li>
+<li>MissionLog.jsx — scrolling event log showing cross-domain events</li>
+<li>RiskIndicator.jsx — CPA/TCPA gauges for surface assets</li>
+<li>Responsive layout, loading states, error states, smooth animations</li>
+<li>Git commit: "feat: mission replay and polish"</li>
+<li><strong>🎬 Phase 3 Demo:</strong> Full dashboard, voice command, multi-domain, GPS-denied. 90 seconds.</li>
+</ul></div>
+
+<h3><span class="phase p4">PHASE 4</span> Ship It — Weeks 12-14</h3>
+<p><strong>Goal:</strong> Demo video recorded, GitHub polished, ready to send to HavocAI.</p>
+
+<div class="wk"><div class="wn">WEEK 12: Demo Video</div>
+<ul class="cl">
+<li>Write docs/DEMO_SCRIPT.md — exact 3-minute sequence</li>
+<li>The money shot: voice command → "Establish maritime surveillance with Alpha and Bravo in echelon. Deploy Eagle for aerial recon of the northern shore." → everything moves</li>
+<li>Mid-demo: toggle GPS-denied → positions degrade → assets keep operating autonomously</li>
+<li>Practice 5 times. Record with OBS or QuickTime. Add minimal text overlays.</li>
+<li>Upload to YouTube (unlisted) or Loom</li>
+</ul></div>
+
+<div class="wk"><div class="wn">WEEK 13: GitHub + Blog Post</div>
+<ul class="cl">
+<li>Polish README.md: architecture diagram, GIF, install instructions, CORALL acknowledgment</li>
+<li>Write CORALL_CHANGES.md documenting what you added vs upstream</li>
+<li>Technical blog post: "Building a Local-First Multi-Domain LLM C2 System"</li>
+<li>1-page technical brief PDF for in-person meetings</li>
+</ul></div>
+
+<div class="wk"><div class="wn">WEEK 14: Launch</div>
+<ul class="cl">
+<li>Post demo video on LinkedIn/Twitter/X</li>
+<li>Cold email to HavocAI: demo link + GitHub + 1-page brief</li>
+<li>Apply to open HavocAI positions with project as portfolio</li>
+<li>Send to RIHub contacts and Roger Williams network</li>
+<li>Follow up within 1 week if no response</li>
+</ul></div>
+</section>
+
+<!-- ==================== RISKS ==================== -->
+<section id="risks">
+<h2>Risks & Guard Rails</h2>
+
+<h3>The Scope Creep Contract — v2.0</h3>
+<div class="risk"><div class="risk-t">⚠️ Hard Constraints — Sign This Mentally</div>
+<ul>
+<li><strong>3 surface vessels + 1 drone = 4 assets total.</strong> No more. Four is impressive. Five is scope creep.</li>
+<li><strong>4 mission types:</strong> patrol, search, escort, loiter. The drone adds aerial_recon as a 5th. That's it.</li>
+<li><strong>1 LLM model in demo:</strong> Pick Qwen or Llama, whichever works better. Stick with it.</li>
+<li><strong>Dashboard does 6 things:</strong> map, asset cards, command input, event log, risk display, GPS-denied toggle. NO MORE.</li>
+<li><strong>Drone model is SIMPLE:</strong> x, y, altitude, heading, speed, waypoint following. No aerodynamics. No wind. No battery simulation. It moves on the map. That's enough.</li>
+<li><strong>GPS-denied is COSMETIC:</strong> Add noise to positions, reduce update rate, show degraded indicators. Don't build actual INS simulation.</li>
+<li><strong>Commit every day. 30-second recording every Sunday.</strong></li>
+<li><strong>Ship by July 5, 2026.</strong> Everything serves this date.</li>
+</ul>
+</div>
+
+<h3>Technical Risks & Mitigations</h3>
+
+<div class="card cr"><div class="ct">Risk: CORALL code issues on Apple Silicon</div>
+<p><strong>Mitigation:</strong> CORALL is pure Python (numpy, scipy, matplotlib). All have native ARM wheels. If matplotlib GUI has issues, run headless — your React dashboard replaces it anyway.</p></div>
+
+<div class="card cr"><div class="ct">Risk: Local LLM too slow or bad quality</div>
+<p><strong>Mitigation:</strong> Your M3 Ultra runs 70B at ~10-20 tok/s. Most commands need 50-100 tokens = 3-5 seconds worst case. If too slow, drop to 32B. Also: cache common decisions.</p></div>
+
+<div class="card cr"><div class="ct">Risk: Multi-domain parsing is hard for the LLM</div>
+<p><strong>Mitigation:</strong> Your system prompt explicitly lists available assets by domain. "Available surface assets: alpha, bravo, charlie. Available air assets: eagle-1." The LLM just needs to route commands to the right asset IDs. Structured output mode forces valid JSON.</p></div>
+
+<div class="card cr"><div class="ct">Risk: Drone integration takes too long</div>
+<p><strong>Mitigation:</strong> The drone model is trivially simple — 50 lines of Python max. It's a dict with x, y, altitude, heading, speed that gets updated each tick. If it takes more than 2 days, you've over-engineered it. STOP and simplify.</p></div>
+
+<div class="card cr"><div class="ct">Risk: You get stuck and lose momentum</div>
+<p><strong>Mitigation:</strong> 4-hour rule. If stuck on one thing for 4 hours, SKIP IT and move forward. Record what currently works. Forward motion beats perfection.</p></div>
+
+<div class="card cr"><div class="ct">Risk: GPS-denied mode is too complex</div>
+<p><strong>Mitigation:</strong> It's a function that adds random noise to coordinates. That's it. <code>noisy_x = x + random.gauss(0, noise_meters)</code>. The visual effect on the dashboard is the point, not the math behind it.</p></div>
+
+<h3>Git Workflow</h3>
+<div class="code"># Branch strategy
+main          → always working, always demo-able
+feat/xxx      → feature branches, merge when working
+
+# Daily workflow
+git checkout -b feat/drone-model
+# ... work ...
+git add -A
+git commit -m "feat: drone dynamics with waypoint following"
+git checkout main
+git merge feat/drone-model
+git push origin main
+git branch -d feat/drone-model
+
+# Commit format: feat: / fix: / docs: / refactor: / test:</div>
+
+<h3>Daily Routine</h3>
+<div class="card ca">
+<div class="ct">Non-Negotiable Daily Practice</div>
+<ol>
+<li><strong>Activate venv:</strong> <code>cd ~/Projects/localfleet && source .venv/bin/activate</code></li>
+<li><strong>Pull latest:</strong> <code>git pull</code></li>
+<li><strong>Check this week's checklist</strong> in Build Phases</li>
+<li><strong>Work 1-2 hours minimum</strong></li>
+<li><strong>Commit:</strong> <code>git add -A && git commit -m "..."</code></li>
+<li><strong>Push:</strong> <code>git push</code></li>
+</ol>
+</div>
+</section>
+
+<!-- ==================== REFERENCE ==================== -->
+<section id="ref">
+<h2>Quick Reference</h2>
+
+<h3>Key URLs</h3>
+<ul>
+<li><strong>CORALL Repo:</strong> github.com/Klins101/CORALL</li>
+<li><strong>CORALL Paper:</strong> arxiv.org/html/2411.16587v3</li>
+<li><strong>Fossen's Sim (backup):</strong> github.com/MoMagDii/uuv_python_simulator</li>
+<li><strong>Ollama API Docs:</strong> github.com/ollama/ollama/blob/main/docs/api.md</li>
+<li><strong>MOOS-IvP (reference):</strong> oceanai.mit.edu/moos-ivp</li>
+<li><strong>HavocAI:</strong> havocai.com</li>
+<li><strong>HavocAI Careers:</strong> havocai.com/careers</li>
+<li><strong>HavocAI Air-Sea Demo (Dec 2025):</strong> Search "HavocAI GPS-denied air-sea Troia"</li>
+<li><strong>Mavrik + Teleo Acquisitions (Mar 2026):</strong> Search "Havoc Mavrik Teleo acquisition"</li>
+</ul>
+
+<h3>Ollama API Quick Reference</h3>
+<div class="code"># Generate with structured output
+POST http://localhost:11434/api/generate
+{
+  "model": "qwen2.5:72b",
+  "prompt": "Your command here",
+  "system": "System prompt here",
+  "stream": false,
+  "format": { ... FleetCommand JSON Schema ... },
+  "options": { "temperature": 0, "num_predict": 300 }
+}
+
+# Using ollama Python package (preferred):
+from ollama import chat
+from src.schemas import FleetCommand
+
+response = chat(
+    model='qwen2.5:72b',
+    messages=[{'role': 'user', 'content': user_text}],
+    format=FleetCommand.model_json_schema(),
+    options={'temperature': 0}
+)
+cmd = FleetCommand.model_validate_json(response.message.content)</div>
+
+<h3>Key COLREGS Rules</h3>
+<div class="card">
+<ul>
+<li><strong>Rule 7</strong> — Risk of Collision: constant relative bearing = danger</li>
+<li><strong>Rule 8</strong> — Actions must be early, substantial, good seamanship</li>
+<li><strong>Rule 13</strong> — Overtaking: overtaking vessel keeps clear</li>
+<li><strong>Rule 14</strong> — Head-on: both alter starboard, pass port-to-port</li>
+<li><strong>Rule 15</strong> — Crossing: vessel with other on starboard gives way</li>
+<li><strong>Rule 16</strong> — Give-way vessel: early and substantial action</li>
+<li><strong>Rule 17</strong> — Stand-on vessel: maintain course; may act if give-way doesn't</li>
+</ul>
+</div>
+
+<h3>Defense-Tech Vocabulary</h3>
+<div class="g3">
+<div class="card"><strong>C2</strong> — Command & Control</div>
+<div class="card"><strong>ISR</strong> — Intel, Surveillance, Recon</div>
+<div class="card"><strong>USV/ASV</strong> — Uncrewed/Autonomous Surface Vessel</div>
+<div class="card"><strong>UAV/UAS</strong> — Uncrewed Aerial Vehicle/System</div>
+<div class="card"><strong>CONOPS</strong> — Concept of Operations</div>
+<div class="card"><strong>ITAR</strong> — Arms export regs</div>
+<div class="card"><strong>CPA/TCPA</strong> — Closest Point of Approach / Time to</div>
+<div class="card"><strong>ADA2</strong> — All-domain attritable autonomy</div>
+<div class="card"><strong>Replicator</strong> — DoD autonomous systems program</div>
+<div class="card"><strong>CJADC2</strong> — Combined Joint All-Domain C2</div>
+<div class="card"><strong>GPS-denied</strong> — Operating without satellite nav</div>
+<div class="card"><strong>Multi-domain</strong> — Air + sea + land combined</div>
+</div>
+</section>
+
+</div>
+
+<script>
+document.querySelectorAll('nav button').forEach(b=>{
+b.addEventListener('click',()=>{
+document.querySelectorAll('nav button').forEach(x=>x.classList.remove('on'));
+b.classList.add('on');
+document.querySelectorAll('section').forEach(s=>s.classList.remove('v'));
+document.getElementById(b.dataset.t).classList.add('v');
+window.scrollTo({top:0,behavior:'smooth'});
+});
+});
+</script>
+</body>
+</html>
