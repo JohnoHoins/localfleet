@@ -5,11 +5,14 @@ GET  /api/assets        — current fleet state
 GET  /api/mission       — active mission info
 POST /api/gps-mode      — toggle GPS degradation
 POST /api/voice-command — send audio, get transcription + command
+GET  /api/logs          — retrieve mission log events
+GET  /api/logs/summary  — mission log summary
 """
 import os
 import tempfile
+from typing import Optional
 
-from fastapi import APIRouter, Request, UploadFile, File
+from fastapi import APIRouter, Query, Request, UploadFile, File
 
 from src.schemas import (
     CommandRequest, CommandResponse, FleetState, GpsDeniedRequest,
@@ -73,5 +76,37 @@ def create_router() -> APIRouter:
         finally:
             if tmp_path and os.path.exists(tmp_path):
                 os.unlink(tmp_path)
+
+    @router.get("/logs")
+    async def get_logs(
+        request: Request,
+        event_type: Optional[str] = Query(None),
+        asset_id: Optional[str] = Query(None),
+        limit: int = Query(200),
+    ):
+        """Retrieve logged mission events with optional filters."""
+        logger = getattr(request.app.state, "logger", None)
+        if logger is None:
+            return {"events": [], "count": 0}
+        events = logger.get_events(
+            event_type=event_type, asset_id=asset_id, limit=limit,
+        )
+        return {
+            "events": [e.model_dump(mode="json") for e in events],
+            "count": len(events),
+        }
+
+    @router.get("/logs/summary")
+    async def get_logs_summary(request: Request):
+        """Return a summary of logged mission events."""
+        logger = getattr(request.app.state, "logger", None)
+        if logger is None:
+            return {"total_events": 0, "commands": 0, "state_snapshots": 0, "gps_changes": 0, "duration_seconds": 0}
+        return {
+            "total_events": logger.count_events(),
+            "commands": logger.count_events("command"),
+            "state_snapshots": logger.count_events("state"),
+            "gps_changes": logger.count_events("gps_change"),
+        }
 
     return router

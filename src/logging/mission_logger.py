@@ -29,7 +29,7 @@ class MissionLogger:
             os.makedirs(DEFAULT_DB_DIR, exist_ok=True)
             db_path = os.path.join(DEFAULT_DB_DIR, "mission_log.db")
         self.db_path = db_path
-        self._conn = sqlite3.connect(db_path)
+        self._conn = sqlite3.connect(db_path, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
         self._create_table()
 
