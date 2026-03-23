@@ -1,4 +1,4 @@
-import { MapContainer, TileLayer, Marker, Popup, Circle, useMap } from 'react-leaflet'
+import { MapContainer, TileLayer, Marker, Popup, Circle, Polyline, useMap } from 'react-leaflet'
 import L from 'leaflet'
 import { useEffect, useMemo } from 'react'
 
@@ -46,7 +46,12 @@ function FitBounds({ assets }) {
   return null
 }
 
-export default function FleetMap({ assets }) {
+const TRAIL_COLORS = {
+  surface: '#3b82f680',
+  air: '#06b6d480',
+}
+
+export default function FleetMap({ assets, trails = {} }) {
   const center = useMemo(() => {
     if (!assets?.length) return [ORIGIN_LAT, ORIGIN_LNG]
     const avgX = assets.reduce((s, a) => s + a.x, 0) / assets.length
@@ -64,6 +69,24 @@ export default function FleetMap({ assets }) {
         className="dark-map-tiles"
       />
       <FitBounds assets={assets} />
+      {/* Trail lines */}
+      {assets.map((asset) => {
+        const trail = trails[asset.asset_id]
+        if (!trail || trail.length < 2) return null
+        const positions = trail.map(([x, y]) => metersToLatLng(x, y))
+        return (
+          <Polyline
+            key={`trail-${asset.asset_id}`}
+            positions={positions}
+            pathOptions={{
+              color: TRAIL_COLORS[asset.domain] || '#3b82f680',
+              weight: 2,
+              dashArray: asset.domain === 'air' ? '6 4' : undefined,
+            }}
+          />
+        )
+      })}
+      {/* Asset markers */}
       {assets.map((asset) => {
         const pos = metersToLatLng(asset.x, asset.y)
         return (

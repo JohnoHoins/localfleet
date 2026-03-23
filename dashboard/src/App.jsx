@@ -1,3 +1,4 @@
+import { useRef } from 'react'
 import useWebSocket from './hooks/useWebSocket'
 import FleetMap from './components/FleetMap'
 import AssetCard from './components/AssetCard'
@@ -5,9 +6,24 @@ import CommandPanel from './components/CommandPanel'
 import GpsDeniedToggle from './components/GpsDeniedToggle'
 import MissionLog from './components/MissionLog'
 
+const MAX_TRAIL = 200
+
 export default function App() {
   const { fleetState, connected } = useWebSocket()
   const assets = fleetState?.assets || []
+  const trails = useRef({})
+
+  // Accumulate position history for trail lines
+  for (const a of assets) {
+    if (!trails.current[a.asset_id]) trails.current[a.asset_id] = []
+    const t = trails.current[a.asset_id]
+    const last = t[t.length - 1]
+    // Only push if moved at least 2m (avoid piling up points when idle)
+    if (!last || Math.abs(a.x - last[0]) > 2 || Math.abs(a.y - last[1]) > 2) {
+      t.push([a.x, a.y])
+      if (t.length > MAX_TRAIL) t.shift()
+    }
+  }
 
   return (
     <div className="h-screen flex flex-col" style={{ background: '#0b0f19' }}>
@@ -30,7 +46,7 @@ export default function App() {
       <div className="flex flex-1 min-h-0">
         {/* Map — 70% */}
         <div className="flex-[7] min-h-0">
-          <FleetMap assets={assets} />
+          <FleetMap assets={assets} trails={trails.current} />
         </div>
 
         {/* Sidebar — 30% */}

@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import VoiceButton from './VoiceButton'
 
 export default function CommandPanel() {
   const [text, setText] = useState('')
@@ -47,6 +48,7 @@ export default function CommandPanel() {
         >
           {sending ? '...' : 'SEND'}
         </button>
+        <VoiceButton onResult={(data) => setResult({ ...data, client_ms: '—' })} />
       </div>
 
       {result && (

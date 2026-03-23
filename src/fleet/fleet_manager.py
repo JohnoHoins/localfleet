@@ -147,7 +147,7 @@ class FleetManager:
                 domain=DomainType.SURFACE,
                 x=x,
                 y=y,
-                heading=math.degrees(s[2]) % 360,
+                heading=(90 - math.degrees(s[2])) % 360,
                 speed=float(s[5]),
                 status=v["status"],
                 current_waypoint_index=v["i_wpt"],

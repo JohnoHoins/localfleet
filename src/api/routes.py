@@ -1,15 +1,20 @@
 """
 REST endpoints for LocalFleet.
-POST /api/command — send NL command
-GET  /api/assets  — current fleet state
-GET  /api/mission — active mission info
-POST /api/gps-mode — toggle GPS degradation
+POST /api/command       — send NL command
+GET  /api/assets        — current fleet state
+GET  /api/mission       — active mission info
+POST /api/gps-mode      — toggle GPS degradation
+POST /api/voice-command — send audio, get transcription + command
 """
-from fastapi import APIRouter, Request
+import os
+import tempfile
+
+from fastapi import APIRouter, Request, UploadFile, File
 
 from src.schemas import (
     CommandRequest, CommandResponse, FleetState, GpsDeniedRequest,
 )
+from src.voice.whisper_local import transcribe_audio
 
 
 def create_router() -> APIRouter:
@@ -47,5 +52,26 @@ def create_router() -> APIRouter:
             "gps_mode": req.mode.value,
             "noise_meters": req.noise_meters,
         }
+
+    @router.post("/voice-command", response_model=CommandResponse)
+    async def post_voice_command(request: Request, audio: UploadFile = File(...)):
+        """Transcribe uploaded audio and dispatch as fleet command."""
+        tmp_path = None
+        try:
+            suffix = os.path.splitext(audio.filename or ".wav")[1] or ".wav"
+            with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+                tmp.write(await audio.read())
+                tmp_path = tmp.name
+
+            # Frontend sends 16kHz mono WAV — pass directly to Whisper
+            text = transcribe_audio(tmp_path)
+            commander = request.app.state.commander
+            req = CommandRequest(text=text, source="voice")
+            return commander.handle_command(req)
+        except Exception as e:
+            return CommandResponse(success=False, error=str(e))
+        finally:
+            if tmp_path and os.path.exists(tmp_path):
+                os.unlink(tmp_path)
 
     return router
