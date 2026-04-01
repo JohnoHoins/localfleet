@@ -1,0 +1,1879 @@
+# Memory Index
+
+- [user_profile.md](user_profile.md) — Johno's role, hardware setup, LocalFleet project context
+- [feedback_work_style.md](feedback_work_style.md) — Strict session rules: one file, test immediately, never modify schemas
+- [project_build_order.md](project_build_order.md) — Build order progress, Step 5 (fleet_manager) completed 2026-03-23
+===== feedback_work_style.md =====
+---
+name: feedback_work_style
+description: Johno's strict session rules — one file, test immediately, never modify schemas or working code
+type: feedback
+---
+
+Absolute rules for every session:
+1. SCHEMAS ARE GOD — all types from src/schemas.py. Never modify schemas. Fix the module.
+2. ONE FILE per session (two max). Small, specific, testable.
+3. TEST BEFORE MOVING ON — run it in this session.
+4. NEVER REFACTOR WORKING CODE.
+5. BUILD BOTTOM-UP — follow exact build order.
+
+Also: read all dependency files before writing code. Import exactly from schemas, not redefine types.
+
+**Why:** Prevents scope creep and regressions in a complex multi-module system.
+**How to apply:** At session start, confirm which file to build. Read dependencies. Write module + tests. Run all tests. Stop.
+===== project_build_order.md =====
+---
+name: project_build_order
+description: LocalFleet build order progress — tracking which steps are complete
+type: project
+---
+
+Build order progress as of 2026-03-23:
+- Step 1: schemas.py — DONE
+- Step 2: drone_dynamics.py — DONE
+- Step 3: gps_denied.py — DONE
+- Step 4: ollama_client.py — DONE
+- Step 5: fleet_manager.py — DONE (completed 2026-03-23)
+- Step 6: fleet_commander.py — DONE (completed 2026-03-23)
+- Step 7+: drone_coordinator → formations/task_allocator → API server → dashboard → voice → logging
+
+**Why:** Strict bottom-up build order ensures each module can be tested in isolation before being composed.
+**How to apply:** Always check what step is next before writing code. Never skip ahead.
+===== user_profile.md =====
+---
+name: user_profile
+description: Johno is building LocalFleet, a local-first multi-domain autonomous fleet sim on Mac Studio M3 Ultra 256GB, air-gapped with Ollama
+type: user
+---
+
+Johno is building LocalFleet — a multi-domain LLM command & control system for autonomous fleet simulation (surface vessels + drones). Runs entirely local on Mac Studio M3 Ultra with 256GB RAM, air-gapped, using Ollama (Qwen 72B) for local LLM inference. Forked from CORALL for vessel dynamics/COLREGS/risk.
+
+Prefers strict rules: schemas are source of truth, one file per session, test before moving on, never refactor working code, build bottom-up.
+===== settings.local.json =====
+{
+  "permissions": {
+    "allow": [
+      "Bash(python:*)",
+      "Bash(pnpm --version)",
+      "Bash(pnpm create:*)",
+      "Bash(cd:*)",
+      "Bash(pnpm install:*)",
+      "Bash(pnpm add:*)",
+      "Bash(npx vite:*)",
+      "Bash(curl -s http://localhost:8000/api/assets)",
+      "Bash(curl:*)",
+      "Bash(python3:*)",
+      "Bash(lsof -ti:8000)",
+      "Bash(xargs kill:*)",
+      "Bash(lsof -ti:5173)",
+      "Bash(lsof -ti:5173 -ti:5174 -ti:8000)",
+      "Bash(source .venv/bin/activate)",
+      "Bash(uvicorn src.api.server:app --host 127.0.0.1 --port 8000)",
+      "Bash(grep -h \"def test_\" tests/*.py)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(pip install:*)",
+      "Bash(kill:*)",
+      "Bash(huggingface-cli download:*)",
+      "Bash(ffmpeg -version)",
+      "Bash(ffmpeg -y -i /tmp/test_dummy.webm -ar 16000 -ac 1 /tmp/test_out.wav)",
+      "Bash(ffmpeg -codecs)",
+      "Bash(ls -la /Users/johno/Projects/localfleet/*.txt /Users/johno/Projects/localfleet/Makefile)",
+      "Bash(/tmp/check_files.txt:*)",
+      "Read(//tmp/**)",
+      "Bash(grep -E '\\\\.\\(json|py|txt|cfg\\)$')",
+      "Bash(.venv/bin/python -m pytest tests/test_mission_logger.py -v 2>&1)",
+      "Bash(.venv/bin/python -m pytest tests/ -v 2>&1)",
+      "Bash(.venv/bin/python -m pytest tests/test_integration_logging.py -v 2>&1)",
+      "Bash(pkill -f \"uvicorn src.api.server:app\")",
+      "Bash(pip3 install:*)",
+      "Bash(ls /Users/johno/Projects/localfleet/requirements*.txt)",
+      "Bash(source /Users/johno/Projects/localfleet/venv/bin/activate)",
+      "Bash(wc -l /Users/johno/Projects/localfleet/src/**/*.py /Users/johno/Projects/localfleet/src/**/**/*.py)"
+    ]
+  }
+}
+===== LOCALFLEET_MASTER_PROMPT.md =====
+# LOCALFLEET — MASTER BUILD PROMPT v2.0
+## Paste this ENTIRE document into a fresh Claude session with maximum context
+
+---
+
+# WHO I AM
+
+I'm John, a finance/economics student at Roger Williams University in Rhode Island. I have ZERO coding experience. I run a 70-person hockey camp business. I'm building a portfolio project to get hired at HavocAI, a defense-tech company 20 minutes from my school that builds collaborative autonomous systems for the US military. I have a Mac Studio M3 Ultra with 256GB RAM — one of the most powerful personal computers on Earth for running AI locally.
+
+# WHAT I'M BUILDING
+
+**LocalFleet** — a local-first, multi-domain LLM command & control system for autonomous fleet simulation. I speak or type a natural language command. A local 70B-parameter AI (running on my machine via Ollama, no internet) interprets it. Simulated surface vessels AND a drone on a map start moving in coordinated patterns. Everything runs air-gapped — zero data leaves my machine. This mirrors HavocAI's "Havoc Orchestrator" and "Havoc Control" products, and directly aligns with their December 2025 GPS-denied air-sea demo in Portugal and their March 2026 acquisitions of Mavrik (drones) and Teleo (ground autonomy).
+
+# WHY MULTI-DOMAIN
+
+HavocAI is no longer just a maritime company. On March 11, 2026 they acquired a drone company (Mavrik) and a ground vehicle autonomy company (Teleo). Their biggest demo was air+sea coordination without GPS. My project demonstrates surface vessels + a drone, commanded through natural language, through one interface. This shows I understand where they're GOING, not where they were.
+
+# MY HARDWARE
+
+- Mac Studio M3 Ultra, 256GB unified memory
+- Can run 70B+ parameter LLMs locally at 10-20 tokens/second
+- macOS, Apple Silicon native
+
+# SHIP DATE: July 5, 2026
+
+---
+
+# TECHNOLOGY STACK
+
+| Layer | Technology | Purpose |
+|-------|-----------|---------|
+| LLM | Ollama + Qwen 2.5 72B | Local AI inference, structured JSON output |
+| Maritime Sim | CORALL (Queen's University Belfast, MIT license) | Vessel dynamics, COLREGS, CPA/TCPA risk |
+| Drone Sim | Custom drone_dynamics.py (~50 lines) | Simple 2D+altitude waypoint follower |
+| Backend | Python 3.11 + FastAPI + WebSocket | API server, real-time state streaming at 4Hz |
+| Frontend | React 18 + Leaflet.js + Tailwind CSS | Dark military C2 dashboard with live map |
+| Voice | mlx-whisper (Apple Silicon optimized) | Local speech-to-text |
+| Data | Pydantic schemas + SQLite | Type validation + mission logging |
+| GPS-Denied | Custom gps_denied.py (~30 lines) | Position noise + degraded update rate |
+
+---
+
+# ABSOLUTE RULES — NEVER VIOLATE THESE
+
+## Rule 1: SCHEMAS ARE GOD
+Every single module in this project imports its data types from ONE file: `src/schemas.py`. If a module creates or expects data that doesn't match the schemas, THE MODULE IS WRONG. Never modify the schemas to fit broken code. Fix the code.
+
+## Rule 2: ONE FILE PER SESSION
+Each Claude Code session works on ONE module (two maximum). Never "build the whole backend." Small, specific, testable units.
+
+## Rule 3: TEST BEFORE MOVING ON
+After writing a file, RUN IT in the same session. Don't move to the next module with broken code behind you.
+
+## Rule 4: NEVER REFACTOR WORKING CODE
+If a module works, don't let any AI session "improve" or "refactor" it later. It will break things guessing at code it can't fully see. Working code is sacred.
+
+## Rule 5: BUILD BOTTOM-UP ONLY
+Follow the exact build order below. Each module depends only on modules built before it. Never skip ahead.
+
+## Rule 6: SCOPE IS LOCKED
+- 3 surface vessels (alpha, bravo, charlie) + 1 drone (eagle-1) = 4 assets total
+- 5 mission types: patrol, search, escort, loiter, aerial_recon
+- 1 LLM model in demo (Qwen 72B or Llama 3 70B — whichever works better)
+- Dashboard does 6 things: map, asset cards, command input, event log, risk display, GPS-denied toggle
+- Drone model is SIMPLE: position, altitude, heading, speed, waypoint following. No aerodynamics.
+- GPS-denied is COSMETIC: random noise on positions, reduced update rate, visual indicators.
+
+## Rule 7: COMMIT EVERY DAY
+Even a README typo. Green squares = momentum.
+
+---
+
+# THE COMPLETE DATA CONTRACTS — src/schemas.py
+
+This is the ENTIRE source of truth. Create this file FIRST, before any other code. Paste it into every Claude Code session.
+
+```python
+"""
+LocalFleet Data Contracts v2.0 — Multi-Domain
+THE source of truth for all modules.
+Every module imports from this file. DO NOT define data structures elsewhere.
+
+v2.0 Changes:
+- Added DomainType enum (SURFACE, AIR)
+- Asset-generic naming (AssetCommand, AssetState)
+- Altitude field for air domain
+- GPS-denied degradation fields
+- DronePattern enum for aerial behaviors
+"""
+from pydantic import BaseModel, Field
+from typing import List, Optional
+from enum import Enum
+from datetime import datetime
+
+
+# ============================================================
+# ENUMS — Shared across all modules
+# ============================================================
+
+class DomainType(str, Enum):
+    """Which domain this asset operates in."""
+    SURFACE = "surface"    # Vessels — uses CORALL dynamics
+    AIR = "air"            # Drones — uses drone_dynamics.py
+
+class MissionType(str, Enum):
+    """The 5 mission types LocalFleet supports. No more."""
+    PATROL = "patrol"
+    SEARCH = "search"
+    ESCORT = "escort"
+    LOITER = "loiter"
+    AERIAL_RECON = "aerial_recon"
+
+class FormationType(str, Enum):
+    """How surface vessels arrange relative to each other."""
+    ECHELON = "echelon"
+    LINE_ABREAST = "line"
+    COLUMN = "column"
+    SPREAD = "spread"
+    INDEPENDENT = "independent"
+
+class DronePattern(str, Enum):
+    """How a drone operates over an area."""
+    ORBIT = "orbit"
+    SWEEP = "sweep"
+    TRACK = "track"
+    STATION = "station"
+
+class AssetStatus(str, Enum):
+    """Current operational state of any asset."""
+    IDLE = "idle"
+    EXECUTING = "executing"
+    AVOIDING = "avoiding"       # COLREGS avoidance (surface only)
+    RETURNING = "returning"
+    ERROR = "error"
+
+class GpsMode(str, Enum):
+    """GPS availability state."""
+    FULL = "full"
+    DEGRADED = "degraded"
+
+
+# ============================================================
+# COMMANDS — What the operator sends IN
+# ============================================================
+
+class Waypoint(BaseModel):
+    """A point in 2D space (meters, local frame)."""
+    x: float
+    y: float
+
+class AssetCommand(BaseModel):
+    """
+    Command for a single asset (surface OR air).
+    The domain field determines which dynamics engine processes it.
+    """
+    asset_id: str               # "alpha", "bravo", "charlie", "eagle-1"
+    domain: DomainType          # SURFACE or AIR
+    waypoints: List[Waypoint]
+    speed: float = 5.0          # m/s (surface ~5, drone ~15)
+    altitude: Optional[float] = None  # meters — only for AIR domain
+    behavior: str = "waypoint"  # "waypoint", "loiter", "search", "orbit", "sweep", "track"
+    drone_pattern: Optional[DronePattern] = None  # Only for AIR domain
+
+class FleetCommand(BaseModel):
+    """
+    THE central command object. The LLM produces this from natural
+    language input. Every module that processes commands accepts this.
+    Now supports BOTH surface and air assets in a single command.
+    """
+    mission_type: MissionType
+    assets: List[AssetCommand]  # Can contain mixed SURFACE + AIR
+    formation: FormationType = FormationType.INDEPENDENT
+    spacing_meters: float = 200.0
+    colregs_compliance: bool = True
+    comms_lost_behavior: str = "return_to_base"
+    raw_text: Optional[str] = None
+
+
+# ============================================================
+# STATE — What the simulation sends OUT
+# ============================================================
+
+class AssetState(BaseModel):
+    """
+    Current state of one asset (surface or air).
+    Sent via WebSocket to the React dashboard every tick.
+    """
+    asset_id: str
+    domain: DomainType
+    x: float
+    y: float
+    heading: float              # Degrees, 0 = North
+    speed: float
+    altitude: Optional[float] = None
+    status: AssetStatus
+    mission_type: Optional[MissionType] = None
+    current_waypoint_index: int = 0
+    total_waypoints: int = 0
+    risk_level: float = 0.0
+    cpa: Optional[float] = None
+    tcpa: Optional[float] = None
+    drone_pattern: Optional[DronePattern] = None
+    gps_mode: GpsMode = GpsMode.FULL
+    position_accuracy: float = 1.0
+
+class FleetState(BaseModel):
+    """
+    State of the entire fleet. Sent via WebSocket every tick (4Hz).
+    The React dashboard receives this exact JSON shape.
+    """
+    timestamp: float
+    assets: List[AssetState]
+    active_mission: Optional[MissionType] = None
+    formation: FormationType = FormationType.INDEPENDENT
+    gps_mode: GpsMode = GpsMode.FULL
+
+
+# ============================================================
+# EVENTS — What gets logged
+# ============================================================
+
+class MissionEvent(BaseModel):
+    """A logged event for mission replay."""
+    timestamp: float
+    event_type: str             # "command", "state", "decision", "risk", "gps_change"
+    asset_id: Optional[str] = None
+    domain: Optional[DomainType] = None
+    data: dict
+    created_at: datetime = Field(default_factory=datetime.now)
+
+
+# ============================================================
+# API — Request/Response shapes for FastAPI endpoints
+# ============================================================
+
+class CommandRequest(BaseModel):
+    """POST /api/command — what the dashboard sends."""
+    text: str
+    source: str = "text"
+
+class CommandResponse(BaseModel):
+    """POST /api/command — what the server responds with."""
+    success: bool
+    fleet_command: Optional[FleetCommand] = None
+    error: Optional[str] = None
+    llm_response_time_ms: Optional[float] = None
+
+class GpsDeniedRequest(BaseModel):
+    """POST /api/gps-mode — toggle GPS degradation."""
+    mode: GpsMode
+    noise_meters: float = 25.0
+    update_rate_hz: float = 1.0
+```
+
+---
+
+# DATA FLOW — How Everything Connects
+
+```
+USER (voice or text)
+    │
+    ▼
+CommandRequest { text: "Alpha and Bravo patrol harbor, Eagle aerial recon" }
+    │
+    ▼
+[Fleet Commander] ── calls Ollama with FleetCommand.model_json_schema() ──▶ FleetCommand
+    │
+    ▼
+FleetCommand {
+  mission_type: "patrol",
+  assets: [
+    { asset_id: "alpha", domain: "surface", waypoints: [...], speed: 5.0 },
+    { asset_id: "bravo", domain: "surface", waypoints: [...], speed: 5.0 },
+    { asset_id: "eagle-1", domain: "air", waypoints: [...], altitude: 100, drone_pattern: "sweep" }
+  ],
+  formation: "echelon"
+}
+    │
+    ▼
+[Fleet Manager] ── routes by domain:
+    ├── SURFACE assets → CORALL dynamics instances (vessel_dynamics.py, controller.py)
+    └── AIR assets → DroneAgent instance (drone_dynamics.py)
+    │
+    ▼
+[Each tick (dt=0.25s)]:
+    ├── CORALL steps vessel physics + COLREGS avoidance
+    ├── DroneAgent steps toward waypoint at altitude
+    └── If GPS-denied: gps_denied.py adds noise to all positions
+    │
+    ▼
+FleetState { timestamp: 12.5, assets: [AssetState, AssetState, ...], gps_mode: "full" }
+    │
+    ▼
+[WebSocket at 4Hz] ── sends JSON to React dashboard
+    │
+    ▼
+Dashboard renders vessels (ship icon) + drone (plane icon) on dark Leaflet map
+```
+
+---
+
+# SYSTEM ARCHITECTURE DIAGRAM
+
+```
+┌──────────────────────────────────────────────────────────────────┐
+│                      OPERATOR INTERFACE                          │
+│  ┌──────────┐  ┌───────────┐  ┌───────────────────────────┐    │
+│  │  Voice   │  │  Text     │  │     React Dashboard       │    │
+│  │ (Whisper)│  │  (CLI)    │  │  (Leaflet + D3)           │    │
+│  └────┬─────┘  └─────┬─────┘  │  Ship icons = surface     │    │
+│       └───────────┬───┘        │  Plane icons = air        │    │
+│              ┌────▼──────┐     │  GPS-denied toggle        │    │
+│              │ LOCAL LLM │◄────┘                           │    │
+│              │ Ollama    │  (feedback)                     │    │
+│              │ Qwen 72B  │                                 │    │
+│              └────┬──────┘                                 │    │
+│              ┌────▼─────────────────────┐                  │    │
+│              │ Fleet Commander          │                  │    │
+│              │ NL → AssetCommand[]      │                  │    │
+│              │ Routes surface + air     │                  │    │
+│              └────┬─────────────────────┘                  │    │
+├───────────────────┼────────────────────────────────────────┤    │
+│            FLEET COORDINATION LAYER                         │    │
+│  ┌────────────────▼──────────────────────────────────┐     │    │
+│  │ Fleet Manager                                      │     │    │
+│  │ • Asset registry (vessels + drone)                 │     │    │
+│  │ • Domain-aware state tracking                      │     │    │
+│  │ • Surface formations (echelon/line/spread/column)  │     │    │
+│  │ • Cross-domain task allocation                     │     │    │
+│  │ • GPS-denied degradation engine                    │     │    │
+│  └──┬──────────┬──────────┬──────────┬───────────────┘     │    │
+├─────┼──────────┼──────────┼──────────┼─────────────────────┤    │
+│  SURFACE       SURFACE    SURFACE    AIR                    │    │
+│  ┌──▼─────┐┌──▼─────┐┌──▼─────┐ ┌──▼──────────────┐      │    │
+│  │ alpha  ││ bravo  ││charlie │ │ eagle-1          │      │    │
+│  │CORALL  ││CORALL  ││CORALL  │ │ drone_dynamics   │      │    │
+│  │dynamics││dynamics││dynamics│ │ 2D + altitude     │      │    │
+│  │colregs ││colregs ││colregs │ │ waypoint follow   │      │    │
+│  └────────┘└────────┘└────────┘ └───────────────────┘      │    │
+│                                                             │    │
+│  ┌─────────────────────────────────────────────────┐       │    │
+│  │ GPS-Denied Engine: noise + reduced update rate   │       │    │
+│  └─────────────────────────────────────────────────┘       │    │
+│  ┌─────────────────────────────────────────────────┐       │    │
+│  │ WebSocket Server (FastAPI) → streams at 4Hz      │       │    │
+│  └─────────────────────────────────────────────────┘       │    │
+└─────────────────────────────────────────────────────────────┘
+```
+
+---
+
+# COMPLETE FILE STRUCTURE
+
+```
+localfleet/
+├── .venv/                          # Virtual environment (gitignored)
+├── .gitignore
+├── README.md
+├── pyproject.toml
+├── Makefile
+│
+├── corall-upstream/                # CORALL clone (gitignored, reference only)
+│
+├── src/
+│   ├── __init__.py
+│   ├── schemas.py                  # THE source of truth — ALL data types
+│   │
+│   ├── core/                       # FROM CORALL (adapted for multi-asset)
+│   │   ├── __init__.py
+│   │   ├── simulation.py           # Main sim loop — surface + air
+│   │   └── integration.py          # Numerical integration (unchanged)
+│   │
+│   ├── dynamics/                   # FROM CORALL + drone extension
+│   │   ├── __init__.py
+│   │   ├── vessel_dynamics.py      # FROM CORALL (unchanged)
+│   │   ├── controller.py           # FROM CORALL (unchanged)
+│   │   ├── actuator_modeling.py    # FROM CORALL (unchanged)
+│   │   └── drone_dynamics.py       # YOUR NEW: simple 2D+altitude model
+│   │
+│   ├── navigation/                 # FROM CORALL (unchanged)
+│   │   ├── __init__.py
+│   │   ├── planning.py
+│   │   ├── obstacle_sim.py
+│   │   └── reactive_avoidance.py
+│   │
+│   ├── risk_assessment/            # FROM CORALL (unchanged)
+│   │   ├── __init__.py
+│   │   ├── cpa_calculations.py
+│   │   └── risk_calculations.py
+│   │
+│   ├── decision_making/            # FROM CORALL (adapted)
+│   │   ├── __init__.py
+│   │   ├── decision_making.py      # FROM CORALL baseline
+│   │   └── decision_llm_local.py   # YOUR NEW: Ollama integration
+│   │
+│   ├── fleet/                      # YOUR NEW: Multi-domain coordination
+│   │   ├── __init__.py
+│   │   ├── fleet_manager.py        # Asset registry, state, dispatch
+│   │   ├── fleet_commander.py      # NL → multi-domain commands
+│   │   ├── formations.py           # Surface formations
+│   │   ├── task_allocator.py       # Cross-domain assignment
+│   │   └── drone_coordinator.py    # Drone orbit/sweep/track patterns
+│   │
+│   ├── llm/                        # YOUR NEW: Local LLM interface
+│   │   ├── __init__.py
+│   │   ├── ollama_client.py        # Ollama HTTP client
+│   │   ├── prompts.py              # System + user prompt templates
+│   │   └── parser.py               # LLM output → FleetCommand
+│   │
+│   ├── voice/                      # YOUR NEW: Speech input
+│   │   ├── __init__.py
+│   │   └── whisper_local.py        # mlx-whisper integration
+│   │
+│   ├── api/                        # YOUR NEW: Backend API
+│   │   ├── __init__.py
+│   │   ├── server.py               # FastAPI app
+│   │   ├── routes.py               # REST endpoints
+│   │   └── ws.py                   # WebSocket handler
+│   │
+│   ├── logging/                    # YOUR NEW: Mission logging
+│   │   ├── __init__.py
+│   │   ├── mission_logger.py       # SQLite logging
+│   │   └── replay.py               # Replay from logs
+│   │
+│   └── utils/
+│       ├── __init__.py
+│       ├── imazu_cases.py          # FROM CORALL (unchanged)
+│       ├── config.py               # Global config
+│       └── gps_denied.py           # YOUR NEW: GPS degradation
+│
+├── dashboard/                      # YOUR NEW: React frontend
+│   ├── package.json
+│   ├── vite.config.js
+│   ├── index.html
+│   ├── src/
+│   │   ├── App.jsx
+│   │   ├── main.jsx
+│   │   ├── components/
+│   │   │   ├── FleetMap.jsx        # Leaflet map — vessels + drone
+│   │   │   ├── CommandPanel.jsx    # Text/voice input
+│   │   │   ├── AssetCard.jsx       # Domain-aware status cards
+│   │   │   ├── MissionLog.jsx      # Live event log
+│   │   │   ├── RiskIndicator.jsx   # CPA/TCPA gauges
+│   │   │   └── GpsDeniedToggle.jsx # GPS mode switch
+│   │   ├── hooks/
+│   │   │   └── useWebSocket.js
+│   │   └── styles/
+│   │       └── global.css
+│   └── public/
+│       ├── vessel-icon.svg
+│       └── drone-icon.svg
+│
+├── data/
+│   ├── logs/                       # SQLite files (gitignored)
+│   └── scenarios/
+│       ├── harbor_patrol.json
+│       ├── escort_formation.json
+│       ├── search_pattern.json
+│       └── air_sea_recon.json
+│
+├── scripts/
+│   ├── run_demo.sh
+│   ├── record_demo.sh
+│   └── setup_env.sh
+│
+├── tests/
+│   ├── test_schemas.py
+│   ├── test_ollama_client.py
+│   ├── test_fleet_manager.py
+│   ├── test_drone_dynamics.py
+│   ├── test_parser.py
+│   ├── test_gps_denied.py
+│   └── test_simulation.py
+│
+└── docs/
+    ├── ARCHITECTURE.md
+    ├── CORALL_CHANGES.md
+    └── DEMO_SCRIPT.md
+```
+
+---
+
+# EXACT BUILD ORDER — Non-Negotiable Dependency Chain
+
+Build ONLY in this order. Each step depends on steps above it. If a step breaks, STOP and fix it before continuing.
+
+## STEP 0: src/schemas.py
+- **Write by hand** (copy from the Data Contracts section above)
+- No dependencies. No AI needed. Just type definitions.
+- Test: `python -c "from src.schemas import FleetCommand, AssetState, DomainType; print('Schemas OK')"`
+
+## STEP 1: CORALL modules
+- Copy from corall-upstream/ into your src/ structure
+- Don't modify any CORALL code
+- Test: Run CORALL baseline `cd corall-upstream && python main.py --case_number 1 --no_animation --llm 0`
+
+## STEP 2: src/dynamics/drone_dynamics.py
+- Depends on: schemas.py ONLY
+- Simple DroneAgent class: x, y, altitude, heading, speed, step(dt), set_waypoints(), get_state()
+- ~50-80 lines. If longer, you're over-engineering.
+- Test: `python -c "from src.dynamics.drone_dynamics import DroneAgent; print('Drone OK')"`
+
+## STEP 3: src/utils/gps_denied.py
+- Depends on: schemas.py ONLY
+- Two functions: degrade_position() and should_update()
+- ~30 lines. Uses random.gauss().
+- Test: `python -c "from src.utils.gps_denied import degrade_position; print('GPS OK')"`
+
+## STEP 4: src/llm/ollama_client.py
+- Depends on: schemas.py + Ollama running
+- Function: parse_fleet_command(text) → FleetCommand
+- Uses: `from ollama import chat` + `FleetCommand.model_json_schema()` as format param
+- Test: parse "patrol the harbor with Alpha, Eagle recon from altitude" → valid FleetCommand with mixed domains
+
+## STEP 5: src/fleet/fleet_manager.py
+- Depends on: schemas.py + CORALL dynamics + drone_dynamics + gps_denied
+- Creates 3 surface vessels + 1 drone
+- Routes commands by domain (SURFACE → CORALL, AIR → DroneAgent)
+- get_fleet_state() returns FleetState with ALL assets
+- Test: `python -c "from src.fleet.fleet_manager import FleetManager; print('Fleet OK')"`
+
+## STEP 6: src/fleet/fleet_commander.py
+- Depends on: schemas.py + ollama_client
+- Bridges natural language → fleet_manager
+- Test: NL text → FleetCommand → fleet_manager dispatches to correct domains
+
+## STEP 7: src/fleet/drone_coordinator.py
+- Depends on: schemas.py + drone_dynamics
+- Orbit, sweep, track patterns
+- Test: Give drone orbit pattern, verify it circles
+
+## STEP 8: src/fleet/formations.py + task_allocator.py
+- Depends on: schemas.py
+- Surface-only formations
+- Test: 3 vessels in echelon maintain spacing
+
+## STEP 9: src/api/server.py + ws.py + routes.py
+- Depends on: schemas.py + fleet_manager
+- FastAPI with WebSocket streaming FleetState at 4Hz
+- Endpoints: POST /command, GET /assets, POST /gps-mode
+- Test: `curl -X POST localhost:8000/api/command -d '{"text":"patrol harbor"}' -H "Content-Type: application/json"`
+
+## STEP 10: dashboard/
+- Depends on: WebSocket sending FleetState JSON
+- React + Leaflet + Tailwind
+- Different icons for surface vs air
+- GPS-denied toggle with visual uncertainty indicators
+- Dark C2 theme: background #0b0f19
+- Dark map: `filter: brightness(0.6) invert(1) contrast(3) hue-rotate(200deg) saturate(0.3) brightness(0.7)`
+
+## STEP 11: src/voice/whisper_local.py
+- Depends on: fleet_commander
+- mlx-whisper speech-to-text → feed into command pipeline
+- Test: speak → text → FleetCommand → assets move
+
+## STEP 12: src/logging/mission_logger.py + replay.py
+- Depends on: schemas.py
+- SQLite logging of all events
+- Replay from logs
+
+---
+
+# DAY 1 SETUP — Exact Terminal Commands
+
+Open Terminal on your Mac. Type each command. Wait for each to finish before the next.
+
+```bash
+# 1. Install Xcode command line tools
+xcode-select --install
+# Click Install on popup. Wait 5-10 min.
+
+# 2. Install Homebrew
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+# Enter Mac password when prompted (chars won't show). Follow instructions at end.
+
+# 3. Install tools
+brew install python@3.11
+brew install node
+brew install ollama
+
+# 4. Start Ollama and download model
+ollama serve
+# Open NEW terminal tab (Cmd+T):
+ollama pull qwen2.5:72b
+# This is ~40GB. Wait 10-20 min.
+
+# 5. Create project
+mkdir -p ~/Projects/localfleet
+cd ~/Projects/localfleet
+
+# 6. Create virtual environment
+python3.11 -m venv .venv
+source .venv/bin/activate
+# You should see (.venv) in your prompt now
+
+# 7. Install Python libraries
+pip install numpy scipy matplotlib
+pip install fastapi uvicorn websockets
+pip install pydantic httpx aiosqlite
+pip install ollama instructor
+pip install mlx-whisper
+pip install openai anthropic  # Needed for CORALL transition
+
+# 8. Install frontend tools
+npm install -g pnpm
+
+# 9. Clone CORALL
+git clone https://github.com/Klins101/CORALL.git corall-upstream
+cd corall-upstream
+python main.py --case_number 1 --no_animation --llm 0
+# Should run without errors
+cd ..
+
+# 10. Create ALL directories
+mkdir -p src/core src/dynamics src/navigation src/risk_assessment
+mkdir -p src/decision_making src/fleet src/llm src/voice src/api
+mkdir -p src/logging src/utils
+mkdir -p dashboard/src/components dashboard/src/hooks dashboard/src/styles
+mkdir -p dashboard/public
+mkdir -p data/logs data/scenarios tests docs scripts
+
+# 11. Create __init__.py files
+touch src/__init__.py src/core/__init__.py src/dynamics/__init__.py
+touch src/navigation/__init__.py src/risk_assessment/__init__.py
+touch src/decision_making/__init__.py src/fleet/__init__.py
+touch src/llm/__init__.py src/voice/__init__.py src/api/__init__.py
+touch src/logging/__init__.py src/utils/__init__.py
+
+# 12. Create .gitignore
+cat > .gitignore << 'EOF'
+.venv/
+__pycache__/
+*.pyc
+.DS_Store
+node_modules/
+dist/
+*.egg-info/
+.env
+corall-upstream/
+data/logs/*.db
+dashboard/build/
+dashboard/dist/
+EOF
+
+# 13. NOW create src/schemas.py — paste the ENTIRE schemas from this document
+
+# 14. Initialize git
+git init
+git branch -m main
+git add -A
+git commit -m "init: multi-domain project structure with schemas"
+
+# 15. Install Claude Code
+npm install -g @anthropic-ai/claude-code
+
+# 16. Verify EVERYTHING works
+python --version                    # 3.11+
+ollama list                         # shows qwen2.5:72b
+node --version                      # 18+ or 20+
+git status                          # clean
+python -c "import numpy; print('numpy OK')"
+python -c "import fastapi; print('FastAPI OK')"
+python -c "import pydantic; print('Pydantic OK')"
+python -c "import ollama; print('Ollama pkg OK')"
+python -c "from src.schemas import FleetCommand, AssetState, DomainType; print('Schemas OK')"
+curl http://localhost:11434/api/tags  # Ollama responds
+```
+
+**If ANY of step 16 fails, STOP. Fix it before writing code.**
+
+---
+
+# DAILY WORKFLOW
+
+Every day you work on this project:
+
+```bash
+# 1. Open Terminal
+cd ~/Projects/localfleet
+source .venv/bin/activate
+
+# 2. Make sure Ollama is running
+ollama serve  # skip if already running
+
+# 3. Open new tab (Cmd+T) for work
+
+# 4. Start Claude Code for today's module
+claude
+
+# 5. Paste session context (schemas + what you're working on today)
+
+# 6. Build ONE module. Test it. Verify imports.
+
+# 7. When done:
+git add -A
+git commit -m "feat: description of what you built"
+git push
+```
+
+---
+
+# CLAUDE CODE SESSION TEMPLATE — Paste At Start Of Every Session
+
+```
+I'm building LocalFleet — a local-first, multi-domain LLM command & control
+system. It runs on a Mac Studio M3 Ultra with 256GB RAM, air-gapped, using
+Ollama for local LLM inference.
+
+KEY: This is MULTI-DOMAIN. It commands surface vessels (CORALL dynamics) AND
+a simulated drone (simple 2D+altitude model) through one natural language interface.
+It has a GPS-denied degradation mode.
+
+Forked from CORALL (github.com/Klins101/CORALL) for vessel dynamics/COLREGS/risk.
+Adding: local LLM, multi-domain fleet coordination, React dashboard, voice, GPS-denied.
+
+ALL data types are in src/schemas.py. Every module imports from schemas.py ONLY.
+
+Critical types:
+- DomainType: SURFACE or AIR
+- AssetCommand: command for one asset, includes domain, waypoints, altitude (air), drone_pattern (air)
+- FleetCommand: THE central object. LLM produces this. List[AssetCommand] with mixed domains.
+- AssetState: current state, includes domain, altitude (air), gps_mode, position_accuracy
+- FleetState: all assets + timestamp + gps_mode. Sent via WebSocket at 4Hz.
+
+Available assets: alpha (surface), bravo (surface), charlie (surface), eagle-1 (air)
+
+[PASTE FULL src/schemas.py HERE]
+
+Today I'm working on: [SPECIFIC FILE]
+[DESCRIBE EXACTLY WHAT THIS MODULE SHOULD DO, WHAT INPUTS IT TAKES, WHAT OUTPUTS IT PRODUCES]
+```
+
+---
+
+# VERIFICATION COMMANDS — Run After Each Module
+
+```bash
+# Import check
+python -c "from src.MODULE.FILE import CLASS_OR_FUNCTION; print('OK')"
+
+# Multi-domain schema check
+python -c "
+from src.schemas import *
+cmd = FleetCommand(
+    mission_type=MissionType.PATROL,
+    assets=[
+        AssetCommand(asset_id='alpha', domain=DomainType.SURFACE,
+                     waypoints=[Waypoint(x=100, y=200)], speed=5.0),
+        AssetCommand(asset_id='eagle-1', domain=DomainType.AIR,
+                     waypoints=[Waypoint(x=300, y=400)], speed=15.0,
+                     altitude=100.0, drone_pattern=DronePattern.SWEEP)
+    ],
+    formation=FormationType.ECHELON
+)
+print(cmd.model_dump_json(indent=2))
+print('Multi-domain FleetCommand OK')
+"
+
+# Round-trip check
+python -c "
+from src.schemas import *
+state = FleetState(timestamp=1.0, gps_mode=GpsMode.FULL, assets=[
+    AssetState(asset_id='alpha', domain=DomainType.SURFACE,
+               x=100, y=200, heading=45, speed=5, status=AssetStatus.IDLE),
+    AssetState(asset_id='eagle-1', domain=DomainType.AIR,
+               x=300, y=400, heading=90, speed=15, altitude=100,
+               status=AssetStatus.EXECUTING, drone_pattern=DronePattern.ORBIT)
+])
+json_str = state.model_dump_json()
+recovered = FleetState.model_validate_json(json_str)
+assert recovered == state
+print('Round-trip OK')
+"
+
+# Run all tests
+python -m pytest tests/ -v
+```
+
+---
+
+# WHEN STUCK
+
+- **Under 30 min:** Read error carefully. Google exact error message. Ask Claude Code — paste error + file.
+- **30 min to 2 hours:** Step away. Come back fresh. Start NEW Claude Code session with schemas pasted.
+- **Over 2 hours on ONE thing:** SKIP IT. Move to next module. Mark with TODO. Come back later.
+- **4-hour rule:** If stuck 4 hours, it's not worth it right now. Forward motion always.
+
+---
+
+# KEY OPEN-SOURCE REFERENCES
+
+| Component | Source | What You Take |
+|-----------|--------|--------------|
+| Vessel physics | github.com/Klins101/CORALL | dynamics/, risk_assessment/, navigation/, decision_making/ |
+| LLM structured output | github.com/ollama/ollama | ollama Python package + format parameter |
+| Dashboard reference | github.com/josna-14/Maritime_Vessel_Tracking | Study MapComponent.jsx, ShipCard.jsx patterns |
+| Dark map CSS | CSS filter trick | `filter: brightness(0.6) invert(1) contrast(3) hue-rotate(200deg) saturate(0.3) brightness(0.7)` |
+| WebSocket pattern | github.com/ustropo/websocket-example | FastAPI WS → React useEffect pattern |
+| Backup physics | github.com/MoMagDii/uuv_python_simulator | Only if CORALL has issues |
+
+---
+
+# THE DEMO THAT WINS
+
+The 3-minute video that makes Paul Lwin (HavocAI CEO, ex-Navy pilot, JHU CS, Yale MBA) stop scrolling:
+
+1. **Open:** Dark C2 dashboard. Map centered on a harbor. Four asset cards on the side — three ships, one drone. All idle.
+2. **Voice command:** "Establish maritime surveillance pattern in the harbor with Alpha and Bravo in echelon. Deploy Eagle for aerial reconnaissance along the northern shore."
+3. **Watch:** Two vessels begin coordinated patrol in echelon formation. Drone icon lifts off and begins sweep pattern at altitude. Event log scrolls.
+4. **Second command:** "Contact detected bearing zero-four-five. Alpha intercept. Eagle, track the contact from altitude."
+5. **Watch:** Alpha breaks formation, heads to intercept. Eagle shifts from sweep to track pattern, following the contact.
+6. **Toggle GPS-Denied:** Click the toggle. Position indicators get fuzzy — pulsing uncertainty circles appear around each asset. Update rate visibly slows. Assets keep operating.
+7. **Voice:** "Comms degraded. All assets switch to autonomous patrol."
+8. **Watch:** Assets smoothly transition to independent patrol patterns despite degraded positioning.
+9. **Close:** Cut to black. Text overlay: "LocalFleet — Multi-Domain Collaborative Autonomy. 100% Local. Zero Internet. Built on M3 Ultra."
+
+**That demo mirrors HavocAI's Portugal demonstration, addresses their multi-domain pivot, and runs on consumer hardware. It's impossible to ignore.**
+
+---
+
+# END OF MASTER PROMPT
+# You now have everything needed to build this project from zero.
+# Start with Day 1 Setup. Build bottom-up. Test every step. Ship by July 5.
+===== LOCALFLEET_POLISH_PLAN.md =====
+# LOCALFLEET — POLISH PLAN v1.0
+## From Working Prototype to Demo-Ready C2 System
+## Created: March 24, 2026 | Ship Date: July 5, 2026 (~14 weeks)
+
+---
+
+# PROJECT STATUS SNAPSHOT
+
+**102 tests passing.** Core system fully functional. The build phase (Steps 0-12) is COMPLETE.
+
+### What exists and works:
+- `src/schemas.py` — immutable data contracts (176 lines)
+- `src/dynamics/vessel_dynamics.py` — CORALL Nomoto model with PID controller
+- `src/dynamics/controller.py` — heading/speed PID controller
+- `src/dynamics/actuator_modeling.py` — actuator saturation
+- `src/core/integration.py` — Euler integration
+- `src/navigation/planning.py` — waypoint selection + heading planning
+- `src/dynamics/drone_dynamics.py` — DroneAgent: 2D+altitude waypoint follower with orbit/sweep/track/station
+- `src/fleet/drone_coordinator.py` — pattern generation (orbit circles, sweep zigzags, track offset, station hold)
+- `src/fleet/formations.py` — echelon/line/column/spread formation geometry
+- `src/fleet/fleet_manager.py` — central coordinator: 3 vessels + 1 drone, domain-aware dispatch, CORALL physics loop, GPS degradation, return-to-base
+- `src/fleet/fleet_commander.py` — NL text → LLM → FleetCommand → dispatch → response
+- `src/llm/ollama_client.py` — Ollama chat with Pydantic schema-forced JSON output, 3x retry
+- `src/utils/gps_denied.py` — Gaussian noise + rate limiter (rate limiter exists but is never called)
+- `src/voice/whisper_local.py` — mlx-whisper transcription
+- `src/logging/mission_logger.py` — SQLite event logging
+- `src/api/server.py` — FastAPI factory with CORS
+- `src/api/routes.py` — REST endpoints: /command, /assets, /mission, /gps-mode, /return-to-base, /voice-command, /logs, /logs/summary
+- `src/api/ws.py` — WebSocket at /ws, 4Hz state streaming, simulation stepping
+- `dashboard/src/App.jsx` — layout: header, map (70%), sidebar (30%), trail accumulation
+- `dashboard/src/components/FleetMap.jsx` — Leaflet map, SVG icons (blue arrow=surface, cyan diamond=air), trail polylines, GPS uncertainty circles, marker popups
+- `dashboard/src/components/AssetCard.jsx` — per-asset status card with domain badge, status LED, telemetry
+- `dashboard/src/components/CommandPanel.jsx` — text input + SEND + voice button, shows LLM response JSON
+- `dashboard/src/components/VoiceButton.jsx` — Web Audio capture → 16kHz WAV → upload → transcribe → dispatch
+- `dashboard/src/components/GpsDeniedToggle.jsx` — toggle FULL↔DEGRADED
+- `dashboard/src/components/MissionLog.jsx` — live event log detecting state transitions
+- `dashboard/src/hooks/useWebSocket.js` — WebSocket with auto-reconnect
+- `dashboard/src/styles/global.css` — dark theme, inverted map tiles, pulse animation, scrollbar
+
+### Git history (oldest → newest):
+```
+441a7e4 init: multi-domain project structure with schemas
+ef14ab4 feat: CORALL modules, drone dynamics, GPS-denied engine, Ollama LLM client
+fe44006 feat: fleet coordination, API backend, and React C2 dashboard (Steps 5-10)
+2a101c8 feat: voice input, trail lines, heading fix, and LLM prompt improvements (Step 11)
+a167785 feat: SQLite mission logging and replay (Step 12)
+3619bce feat: wire mission logger into live system with log API endpoints
+4f1a0f2 feat: wire DroneCoordinator, formations, and return-to-base into FleetManager
+addc820 fix: drone stuck when RETURNING, assets at home stuck RETURNING
+```
+
+### Test suite (102 tests, all green):
+- `test_api.py` (9), `test_drone_coordinator.py` (14), `test_drone_dynamics.py` (6), `test_fleet_commander.py` (6), `test_fleet_manager.py` (5), `test_formations.py` (14), `test_gps_denied.py` (3), `test_integration_logging.py` (9), `test_mission_logger.py` (16), `test_ollama_client.py` (3), `test_voice.py` (6), `test_wiring.py` (8)
+
+---
+
+# AUDIT FINDINGS — Every Known Issue
+
+These are the specific issues discovered during the March 24 comprehensive audit. Each polish task below addresses one or more of these.
+
+### LLM Integration
+- Inference takes 5-15 seconds on 72B model — biggest demo pacing risk
+- System prompt has only 1 example — imprecise voice commands may produce bad output
+- No waypoint validation — LLM can generate waypoints beyond 0-2000m range
+- No explicit timeout on `chat()` call — could hang 60+ seconds
+- Voice transcription may misinterpret "Eagle-1" as "Eagle One" etc.
+
+### Multi-Domain Coordination
+- Routing logic is correct and clean — no issues found
+
+### Drone Patterns
+- Orbit: works, produces visible circle, ~63 second period at 150m/15 m/s ✓
+- Sweep: works, zigzag pattern ✓
+- Track: ONE-SHOT ONLY — flies to a static offset point and goes IDLE. Does NOT continuously follow a moving target. This breaks any "track the contact" narrative.
+- No "contact" entity exists to track
+
+### Surface Formations
+- Formation offsets computed once at dispatch, applied as waypoint adjustment
+- Vessels navigate independently to offset positions — they do NOT maintain formation while moving
+- At default 200m spacing and zoom 14, formation may not be visually distinct enough
+
+### GPS-Denied Mode
+- Noise applied (25m σ) — position jitter is visible ✓
+- `should_update()` rate limiter EXISTS in `gps_denied.py` but is NEVER CALLED — update rate reduction is not implemented
+- Uncertainty rings are 25m radius ≈ 2-3 pixels at zoom 14 — nearly invisible
+- Pulse animation targets CSS class `gps-uncertainty-ring` on Leaflet Circle — may not render correctly on SVG elements
+- Noise recomputed every frame (4Hz) creating jittery jumping, not gradual drift
+
+### Voice Pipeline
+- Full chain works: mic → WAV → upload → Whisper → LLM → dispatch ✓
+- ScriptProcessor is deprecated (still works in Chrome/Safari)
+- Total latency: 10-25 seconds (recording + Whisper + LLM)
+- No transcription preview — user never sees what Whisper heard
+- Voice endpoint doesn't return transcribed text
+
+### Dashboard Visual Quality
+- Dark theme + monospace + blue/cyan + glow effects read as military C2 ✓
+- OpenStreetMap tiles with CSS filter inversion leaves street names/building details visible — looks amateur to someone who's seen Palantir/Anduril
+- No grid overlay or coordinate display
+- No UNCLASSIFIED banner (every US military system has this)
+- No mission timer or Zulu clock
+- No mission/formation status badges
+- Sidebar is basic — no visual hierarchy
+- Asset icons are generic SVG shapes, not NATO-style symbology
+- No RTB button on dashboard
+
+### Real-time Performance
+- 4Hz streaming produces smooth movement ✓
+- Vessel Nomoto model + random bias noise creates realistic heading oscillation ✓
+- Trail rendering with 200-point buffer works well ✓
+
+### Return-to-Base
+- Works correctly after recent fix (commit addc820) ✓
+
+### Mission Logging
+- SQLite backend works ✓
+- MissionLog component detects state transitions ✓
+- Log doesn't echo command text — missed atmospheric opportunity
+- Log is sparse/static during quiet periods
+
+### Error Recovery
+- 3x retry + Pydantic validation catches LLM failures ✓
+- CommandResponse returns errors without crashing ✓
+- WebSocket auto-reconnects in 1 second ✓
+- No explicit timeout on LLM chat() call — could hang indefinitely
+
+### Missing Features vs Ideal Demo Script
+1. No "contact" entity for intercept/track scenarios
+2. No "break formation" behavior for individual vessels
+3. No comms-lost autonomous patrol — `comms_lost_behavior` field stored but never acted upon
+4. Track pattern is one-shot, not continuous following
+5. `should_update()` rate limiter never called
+6. Map origin is arbitrary ocean, not a recognizable harbor
+7. No RTB button in dashboard UI
+
+---
+
+# ABSOLUTE RULES — STILL IN EFFECT DURING POLISH
+
+1. **SCHEMAS ARE GOD** — `src/schemas.py` is NEVER modified. All types come from there. If something doesn't fit the schema, fix the module.
+2. **ONE FILE per session** (two max). Small, specific, testable.
+3. **TEST BEFORE MOVING ON** — run tests in the session. All 102 existing tests must stay green.
+4. **NEVER REFACTOR WORKING CODE** — don't "improve" modules that work. Only add to them or create new files.
+5. **SCOPE IS LOCKED** — 3 vessels + 1 drone. 5 mission types. Don't add new asset types or mission types.
+
+### Additional Polish Rules:
+6. **Every change must be tested** — either by existing tests staying green, or by new tests for new functionality.
+7. **Frontend changes** — verify visually by running the dev server. No test suite for React components, but verify behavior manually.
+8. **Don't break the WebSocket contract** — FleetState JSON shape sent via WebSocket must not change. Frontend depends on it.
+9. **New backend endpoints are OK** — adding new REST endpoints in `routes.py` is fine as long as existing ones still work.
+10. **New React components are OK** — adding new components and mounting them in `App.jsx` is fine.
+
+---
+
+# THE POLISH TASKS — Ordered by Phase
+
+## PHASE 1: Dashboard Looks Like C2 (Target: Week 1-2)
+*After this phase, every screenshot looks professional. ~12 hours total.*
+
+### P1.1 — UNCLASSIFIED Banner
+**What:** Thin green bar at the very bottom of the screen: `UNCLASSIFIED // FOUO` in green monospace text, centered. Every US military C2 system has this classification banner.
+**Why for Paul:** He's stared at these banners for his entire Navy career. He'll register it subconsciously. It signals domain awareness.
+**File to modify:** `dashboard/src/App.jsx` — add a footer div after the main content flex container.
+**Styling:** `background: #064e3b` (dark green), `color: #34d399` (green-400), `text-align: center`, `font-size: 10px`, `letter-spacing: 0.2em`, `padding: 2px 0`, `border-top: 1px solid #065f46`.
+**Effort:** 30 minutes
+**Test:** Visual — verify banner appears at bottom of screen, doesn't overlap content
+**Dependencies:** None
+
+### P1.2 — Header Bar Upgrade
+**What:** Upgrade the header from basic "LOCALFLEET + connection dot" to a proper C2 status bar:
+- Left section: `LOCALFLEET` title + `C2 DASHBOARD` subtitle (already exists, keep it)
+- Center section: Zulu clock showing UTC time updating every second (`14:32:07Z` format) + Mission elapsed timer that starts when first command is dispatched (`T+00:03:42` format)
+- Right section: GPS mode indicator (green `GPS: FULL` or flashing amber `GPS: DENIED`), connection dot + status, asset count
+**Why for Paul:** Real C2 systems always show time (Zulu/UTC), mission elapsed time, and system status in the header. This is a density-of-information signal.
+**File to create:** `dashboard/src/components/HeaderBar.jsx` — new component
+**File to modify:** `dashboard/src/App.jsx` — replace inline header with `<HeaderBar>` component
+**Implementation notes:**
+- Zulu clock: `useEffect` with `setInterval(1000)`, format with `toISOString().slice(11,19) + 'Z'`
+- Mission timer: track `missionStartTime` in App.jsx state, set it when first command succeeds, pass as prop. Format as `T+HH:MM:SS`.
+- GPS indicator: use `fleetState.gps_mode` prop, apply amber color + CSS animation when degraded
+**Effort:** 2 hours
+**Test:** Visual — verify clock updates, timer starts on first command, GPS mode reflects toggle
+**Dependencies:** None
+
+### P1.3 — Map Origin: Newport, RI
+**What:** Change the map origin from arbitrary ocean (42°N, -70°W) to Newport Harbor, Rhode Island (41.4925°N, -71.3270°W). This puts operations next to the Naval War College — meaningful for a defense-tech demo, and close to RWU.
+**Why for Paul:** A recognizable harbor with coastline looks real. An arbitrary ocean coordinate looks like a simulation. Newport + Naval War College adds a subtle flex.
+**File to modify:** `dashboard/src/components/FleetMap.jsx`
+**Exact change:** Line 6-7:
+```javascript
+const ORIGIN_LAT = 41.4925   // was 42.0
+const ORIGIN_LNG = -71.3270  // was -70.0
+```
+Also update `M_PER_DEG_LNG` for the new latitude: at 41.49°, `M_PER_DEG_LNG ≈ 83194` (use `111320 * cos(41.49° in radians)`). Current value 82000 is close enough — optional precision fix.
+**Effort:** 15 minutes
+**Test:** Start dev server, verify assets appear in Newport harbor water, not on land. May need to adjust starting vessel positions in `fleet_manager.py` if they end up on land. Check by zooming in.
+**Dependencies:** None
+**IMPORTANT:** After changing origin, visually verify at zoom levels 13-16 that the harbor shape is visible and assets start in water.
+
+### P1.4 — Better Map Tiles (CartoDB Dark Matter)
+**What:** Replace CSS-filter-inverted OpenStreetMap tiles with CartoDB Dark Matter tiles — purpose-built dark tiles with no filter hack needed.
+**Why for Paul:** Inverted OSM has visible street names, building outlines, and map artifacts. CartoDB Dark Matter is a clean, professional dark map. No filter = no visual artifacts.
+**File to modify:** `dashboard/src/components/FleetMap.jsx` — change `TileLayer` url
+**Exact change:**
+```jsx
+<TileLayer
+  url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
+  attribution=""
+/>
+```
+Remove `className="dark-map-tiles"` from TileLayer.
+**File to modify:** `dashboard/src/styles/global.css` — remove the `.dark-map-tiles` CSS rule (lines 11-13). Keep the rest.
+**Effort:** 30 minutes
+**Test:** Visual — verify dark tiles load, no more inverted artifacts, coastline/water boundary visible
+**Dependencies:** Requires internet to load tiles. For air-gapped recording, see P5.1.
+**NOTE:** CartoDB Dark Matter tiles are free and don't require an API key.
+
+### P1.5 — RTB Button
+**What:** A red "RETURN TO BASE" button in the sidebar, styled as an emergency control. Calls `POST /api/return-to-base`.
+**Why for Paul:** Every C2 system has an emergency recall. Plus the demo needs it for the RTB beat.
+**File to create:** `dashboard/src/components/RTBButton.jsx`
+**Implementation:**
+```jsx
+export default function RTBButton() {
+  const [loading, setLoading] = useState(false)
+  async function handleRTB() {
+    setLoading(true)
+    try {
+      await fetch('/api/return-to-base', { method: 'POST' })
+    } catch {}
+    setLoading(false)
+  }
+  return (
+    <button
+      onClick={handleRTB}
+      disabled={loading}
+      className="w-full py-2 bg-red-900/50 hover:bg-red-800/50 border border-red-700 text-red-400
+                 font-bold text-sm rounded tracking-wider transition-colors disabled:opacity-50"
+    >
+      {loading ? 'RETURNING...' : 'RETURN TO BASE'}
+    </button>
+  )
+}
+```
+**File to modify:** `dashboard/src/App.jsx` — import and mount `<RTBButton />` in sidebar, between GpsDeniedToggle and MissionLog.
+**Effort:** 1 hour
+**Test:** Click button while assets are executing, verify all 4 assets get RETURNING status and head home.
+**Dependencies:** None (backend endpoint already exists)
+
+### P1.6 — Mission Log: Echo Command Text
+**What:** When a command is sent, display the natural language text in the MissionLog before the system responses. Format: `> "All vessels patrol to 800 600 in echelon"` in a slightly brighter color.
+**Why for Paul:** Makes the log read like a C2 transcript. Adds density and narrative. Currently the log shows system responses but not what was asked.
+**Implementation approach:** Add state to App.jsx that tracks the last command text. When CommandPanel gets a successful response, set this state. Pass it to MissionLog. MissionLog checks for changes and injects a command entry.
+**File to modify:** `dashboard/src/App.jsx` — add `lastCommandText` state, pass setter to CommandPanel, pass value to MissionLog.
+**File to modify:** `dashboard/src/components/CommandPanel.jsx` — call `onCommandSent(text)` prop after successful response.
+**File to modify:** `dashboard/src/components/MissionLog.jsx` — accept `lastCommandText` prop, inject entry when it changes.
+**Effort:** 1.5 hours
+**Test:** Send a command, verify the natural language text appears in the mission log before the status change entries.
+**Dependencies:** None
+
+### P1.7 — Mission/Formation Status Badge
+**What:** Below the header (or in the header), show the current mission type and formation as prominent badges. Example: `MISSION: PATROL` in green + `FORMATION: ECHELON` in blue. When no mission is active, show `STANDBY` in gray.
+**Why for Paul:** At a glance, the operator knows what's happening. This is standard C2 information display.
+**File to create:** `dashboard/src/components/MissionStatus.jsx`
+**Data source:** `fleetState.active_mission` and `fleetState.formation` — both already in the WebSocket payload.
+**File to modify:** `dashboard/src/App.jsx` — mount in sidebar, above asset cards.
+**Effort:** 1.5 hours
+**Test:** Send command with formation, verify badges update. Send RTB, verify mission clears to STANDBY.
+**Dependencies:** None
+
+### P1.8 — Command Panel: Processing Animation
+**What:** Replace the `...` on the SEND button during LLM inference with a proper processing state:
+- Input field disabled with dimmed opacity
+- Response area shows pulsing `PROCESSING...` text with elapsed time counting up: `LLM processing... 3.2s`
+- Elapsed timer updates every 100ms
+**Why for Paul:** A 5-15 second wait with just `...` on a button looks broken. A processing animation with timer looks intentional and shows the user the system is working.
+**File to modify:** `dashboard/src/components/CommandPanel.jsx`
+**Effort:** 1 hour
+**Test:** Send command, verify timer counts up during processing, stops when response arrives.
+**Dependencies:** None
+
+---
+
+## PHASE 2: GPS-Denied Is Dramatic (Target: Week 3)
+*After this phase, the GPS toggle is a demo highlight. ~4 hours total.*
+
+### P2.1 — GPS-Denied Visual Overhaul
+**What:** Multi-part upgrade to make GPS-denied mode visually dramatic:
+
+**Part A — Increase noise + ring size:**
+- Change default noise from 25m to 50m in `GpsDeniedToggle.jsx` (the `noise_meters` in the POST body)
+- In `FleetMap.jsx`, render uncertainty circles at `position_accuracy * 3` radius instead of `position_accuracy` — so 50m noise produces 150m rings, clearly visible on map
+- **Files:** `dashboard/src/components/GpsDeniedToggle.jsx`, `dashboard/src/components/FleetMap.jsx`
+
+**Part B — Amber screen vignette:**
+- When `fleetState.gps_mode === 'degraded'`, render a CSS overlay on the entire dashboard: amber gradient vignette at screen edges (transparent center, `rgba(245, 158, 11, 0.08)` at edges). This creates a subtle "alert" atmosphere.
+- **File:** `dashboard/src/App.jsx` — conditional overlay div with pointer-events:none
+
+**Part C — Activate rate limiter:**
+- In `fleet_manager.py`, call `should_update()` for each asset when GPS is degraded. Only apply `degrade_position()` when `should_update()` returns True. Otherwise, serve the LAST noisy position. This creates visible position stutter (updates at 1Hz instead of 4Hz) that looks like degraded GPS refresh.
+- Need to store last noisy positions: add `self._last_noisy_positions: Dict[str, tuple] = {}` to `FleetManager.__init__`
+- In `get_fleet_state()`: if degraded and `should_update()` returns True, compute new noisy position and cache it. If False, use cached position.
+- **File:** `src/fleet/fleet_manager.py`
+
+**Part D — Test the pulse animation:**
+- The CSS animation `pulse-ring` in `global.css` may not work on Leaflet SVG circles. If it doesn't, replace with a JavaScript-driven animation: use `useEffect` to toggle circle opacity/radius on an interval, or use a second pulsing circle overlay.
+- **File:** `dashboard/src/components/FleetMap.jsx`, `dashboard/src/styles/global.css`
+
+**Effort:** 4 hours total (all parts)
+**Test:**
+- Backend: existing `test_gps_denied.py` tests must still pass + add test for rate-limited updates
+- Frontend: toggle GPS-denied, verify: (1) visible position jitter, (2) rings clearly visible, (3) amber vignette appears, (4) position updates stutter at ~1Hz, (5) pulse animation works
+**Dependencies:** None
+
+---
+
+## PHASE 3: Formations Feel Real (Target: Week 4)
+*After this phase, coordinated movement looks coordinated. ~8 hours total.*
+
+### P3.1 — Maintained Formations During Movement
+**What:** Currently, formations are computed once at dispatch as waypoint adjustments. Vessels navigate independently to offset positions. Upgrade so followers continuously maintain formation relative to the leader while ALL are moving toward a shared destination.
+**Implementation approach:**
+- In `fleet_manager.py`, when formation is active (not INDEPENDENT) and multiple surface vessels are EXECUTING:
+  - Identify the leader (first surface vessel in the current command)
+  - Each tick in `step()`, compute the leader's current position and heading
+  - Compute follower target positions using `apply_formation()` with leader's CURRENT position/heading
+  - Update follower vessel waypoints to track their formation position (not the original dispatch waypoint)
+  - When leader reaches final destination and goes IDLE, followers navigate to their final formation offset positions and go IDLE
+- Store formation state: `self._formation_leader: str | None`, `self._formation_members: List[str]`, `self._formation_destination: Waypoint | None`
+**File to modify:** `src/fleet/fleet_manager.py` — add formation tracking in `dispatch_command()` and formation maintenance in `step()`
+**Effort:** 5-6 hours (tricky to avoid oscillation — followers chasing a moving leader need damping)
+**Test:** Existing `test_formations.py` (14 tests) must pass + new test: dispatch 3 vessels in echelon to a waypoint, step 100 times, verify followers maintain offset relative to leader throughout movement, not just at endpoint.
+**Risk:** This is the hardest single task. If it causes oscillation or instability, revert and use the simpler approach: just increase formation spacing to 300-400m so the waypoint-adjusted positions look more dramatic on the map.
+**Dependencies:** None
+
+### P3.2 — Vessel Heading Indicators (Wakes)
+**What:** Add short trailing lines behind moving surface vessels showing their direction of travel. A 50m polyline extending opposite the heading direction from each vessel. Makes movement direction instantly readable.
+**File to modify:** `dashboard/src/components/FleetMap.jsx` — for each surface asset with speed > 0.5, render a short Polyline from the asset position extending `50m` in the opposite direction of heading.
+**Implementation:**
+```jsx
+{asset.domain === 'surface' && asset.speed > 0.5 && (
+  <Polyline
+    positions={[
+      metersToLatLng(asset.x, asset.y),
+      metersToLatLng(
+        asset.x - 50 * Math.sin(asset.heading * Math.PI / 180),
+        asset.y - 50 * Math.cos(asset.heading * Math.PI / 180)
+      )
+    ]}
+    pathOptions={{ color: '#3b82f6', weight: 3, opacity: 0.4 }}
+  />
+)}
+```
+**Effort:** 1 hour
+**Test:** Visual — verify wakes appear behind moving vessels, point opposite to heading, disappear when idle.
+**Dependencies:** None
+
+---
+
+## PHASE 4: Contacts & Tracking (Target: Week 5-6)
+*After this phase, the intercept/track demo narrative is possible. ~12 hours total.*
+
+### P4.1 — Simulated Contact Entity
+**What:** Add a simple hostile/unknown contact that moves along a predefined path on the map. This enables the "contact detected, intercept" demo beat.
+**Implementation:**
+- New file: `src/simulation/contact.py`
+  - `Contact` class: `contact_id`, `x`, `y`, `heading`, `speed`, `waypoints[]`, `current_wp_index`, `active` (bool)
+  - `step(dt)`: move toward next waypoint (same logic as DroneAgent._step_waypoint)
+  - `get_state()`: returns a dict (NOT AssetState — we don't modify schemas)
+- New file: `src/simulation/__init__.py`
+- Modify `src/fleet/fleet_manager.py`:
+  - Add `self.contacts: Dict[str, Contact] = {}` to `__init__`
+  - Add `spawn_contact(contact_id, waypoints, speed)` method
+  - In `step()`, step all active contacts
+  - In `get_fleet_state()`, return contacts as a separate field in the WebSocket JSON. Since FleetState schema is immutable, we'll add contacts to the `model_dump()` output AFTER serialization (extend the dict before sending).
+- Modify `src/api/ws.py`: when serializing state, add `contacts` key to the JSON dict
+- Modify `src/api/routes.py`: add `POST /api/spawn-contact` endpoint
+- Modify dashboard: render contacts as red markers on the map
+**Schema workaround:** The WebSocket sends `state.model_dump()` — we can add extra keys to this dict without changing FleetState. The frontend already ignores unknown fields. We just need to read `contacts` from the JSON.
+**Files to create:** `src/simulation/contact.py`, `src/simulation/__init__.py`
+**Files to modify:** `fleet_manager.py`, `ws.py`, `routes.py`, `FleetMap.jsx`
+**Effort:** 6-8 hours
+**Test:** New `test_contact.py` — spawn contact, step, verify movement. Integration test: spawn via API, verify appears in WebSocket payload.
+**Dependencies:** None
+
+### P4.2 — Continuous Track Pattern
+**What:** Upgrade drone track pattern from one-shot to continuous target following.
+**Implementation:**
+- In `DroneAgent`, add `track_target_x: float | None` and `track_target_y: float | None` fields
+- New method `update_track_target(x, y)`: updates the target position. Recalculates the offset waypoint (behind/above target by `track_offset` distance).
+- In `_step_waypoint` (or new `_step_track`): when pattern is TRACK and track target exists, don't go IDLE when reaching waypoint. Instead, continuously update waypoint to offset from track target.
+- In `fleet_manager.py` `step()`: if drone is in TRACK pattern, call `drone.update_track_target(target_x, target_y)` where target is either a contact position (from P4.1) or a specified vessel position.
+- In `drone_coordinator.py` `assign_pattern()` for TRACK: store the target asset_id or contact_id, not just a static waypoint.
+**Files to modify:** `src/dynamics/drone_dynamics.py`, `src/fleet/drone_coordinator.py`, `src/fleet/fleet_manager.py`
+**Effort:** 4 hours
+**Test:** Update existing drone track tests + new test: set track target, update target position 10 times, verify drone follows.
+**Dependencies:** P4.1 (for tracking contacts) OR can work standalone (for tracking friendly vessels)
+
+---
+
+## PHASE 5: Atmosphere & Detail (Target: Week 7-8)
+*After this phase, every detail is right. ~16 hours total.*
+
+### P5.1 — Tile Caching for Air-Gapped Demo
+**What:** Pre-cache map tiles so the dashboard works without internet during recording.
+**Options (choose one):**
+- **Option A (simplest):** Before recording, browse the map at all zoom levels while online. Browser caches tiles. Record within the same browser session. Risk: cache may evict tiles.
+- **Option B (reliable):** Use a local MBTiles tile server. Download CartoDB Dark Matter tiles for Newport area (zoom 10-17) using a tile downloader tool. Serve locally via a Python script or `tileserver-gl-light`. Point Leaflet TileLayer at `http://localhost:8080/{z}/{x}/{y}.png`.
+- **Option C:** Use Leaflet's offline plugin (`leaflet.offline`) to save tiles to IndexedDB from the browser.
+**File to modify (Option B):** `dashboard/src/components/FleetMap.jsx` — change tile URL to localhost. New file: `scripts/serve_tiles.py` or use npm package.
+**Effort:** 3-4 hours for Option B, 30 minutes for Option A
+**Test:** Disconnect internet, reload dashboard, verify map tiles render.
+**Dependencies:** P1.4 (use CartoDB tiles first, then cache them)
+
+### P5.2 — NATO-Inspired Asset Icons
+**What:** Replace generic SVG arrow/diamond icons with simplified MIL-STD-2525 inspired symbols:
+- Surface friendly: rectangle with semicircle on top (standard NATO friendly surface symbol), filled blue
+- Air friendly: rectangle with arc above (standard NATO friendly air symbol), filled cyan
+- Contact/hostile (if P4.1 is done): diamond shape, filled red (standard hostile unknown)
+- Keep heading rotation. Keep glow filter. Keep label below.
+**File to modify:** `dashboard/src/components/FleetMap.jsx` — rewrite `createIcon()` function
+**Effort:** 3-4 hours (SVG design + testing at multiple zoom levels)
+**Test:** Visual — verify icons look correct at zoom 13-17, rotation works, labels readable
+**Dependencies:** None (P4.1 for hostile icon variant)
+
+### P5.3 — Waypoint Visualization on Map
+**What:** When a command is dispatched, show planned waypoints as small dots on the map with connecting dashed lines. This lets the viewer SEE where assets are going.
+**Implementation:**
+- Backend: add a `GET /api/waypoints` endpoint that returns current waypoints for all assets (extract from fleet_manager vessel state + drone state)
+- Frontend: poll this endpoint once after each command, render waypoint markers + lines
+- OR: include waypoints in the WebSocket payload (same pattern as contacts — extend the dict after serialization)
+**Files to modify:** `src/api/routes.py` (new endpoint), `src/fleet/fleet_manager.py` (method to extract waypoints), `dashboard/src/components/FleetMap.jsx` (render waypoints)
+**Effort:** 3-4 hours
+**Test:** Send command, verify waypoint dots appear on map, lines connect them, they fade after assets complete their route.
+**Dependencies:** None
+
+### P5.4 — Drone Altitude Tag on Map
+**What:** Show altitude text next to the drone icon on the map: `ALT 150m`. Reinforces multi-domain — surface assets don't have this.
+**File to modify:** `dashboard/src/components/FleetMap.jsx` — modify `createIcon()` to add altitude text for air domain assets.
+**Effort:** 1 hour
+**Test:** Visual — verify altitude appears next to drone, updates during climb/descent, not shown for surface
+**Dependencies:** None
+
+### P5.5 — CPA/Risk Calculation Between Vessels
+**What:** Implement basic closest point of approach (CPA) calculation between vessel pairs. The `risk_level`, `cpa`, and `tcpa` fields exist in AssetState but are always 0/null.
+**Implementation:**
+- In `fleet_manager.py`, add a `_compute_cpa()` method called during `get_fleet_state()`
+- For each pair of EXECUTING surface vessels, compute CPA and TCPA using current positions, headings, and speeds
+- Simple formula: relative position + relative velocity dot product → time of closest approach → distance at that time
+- Set `risk_level` = `max(0, 1 - cpa/500)` (risk goes to 1 when CPA < 0, to 0 when CPA > 500m)
+- Asset cards already display risk and CPA when non-zero — this will "light up" that data
+**File to modify:** `src/fleet/fleet_manager.py`
+**Effort:** 3-4 hours
+**Test:** New test cases — two vessels on collision course should show high risk, diverging vessels should show 0.
+**Note:** CORALL has `src/risk_assessment/cpa_calculations.py` already. Check if it can be imported directly.
+**Dependencies:** None
+
+### P5.6 — Vessel Speed Wakes (Enhanced)
+**What:** Beyond the simple heading indicator in P3.2, add a gradient "wake" effect — a fading trail of 3-4 translucent dots behind moving surface vessels, giving a sense of speed and momentum.
+**File to modify:** `dashboard/src/components/FleetMap.jsx`
+**Effort:** 2 hours
+**Test:** Visual — verify wakes look like movement, scale with speed, disappear when idle
+**Dependencies:** P3.2 (builds on it)
+
+---
+
+## PHASE 6: Comms-Lost Behavior (Target: Week 9)
+*After this phase, the full demo narrative is possible. ~4 hours total.*
+
+### P6.1 — Comms-Lost Autonomous Patrol
+**What:** Implement the `comms_lost_behavior` field that's stored but never acted upon. When triggered:
+- `"return_to_base"` → calls existing `return_to_base()` method
+- `"autonomous_patrol"` → each asset generates a patrol box (4 waypoints in a rectangle) around its current position and begins looping through them independently
+- `"hold_position"` → all assets stop (set speed to 0, status to IDLE)
+**Implementation:**
+- New method in `fleet_manager.py`: `trigger_comms_lost(behavior: str | None = None)`. If behavior is None, use `self.comms_lost_behavior`.
+- For `"autonomous_patrol"`: for each vessel, generate 4 waypoints forming a 200m × 200m rectangle centered on current position. Set formation to INDEPENDENT. For drone, generate orbit pattern around current position.
+- New API endpoint: `POST /api/comms-lost` — triggers comms-lost behavior
+- New dashboard button: `CommsLostButton.jsx` — amber/yellow styled button
+**Files to modify:** `src/fleet/fleet_manager.py`, `src/api/routes.py`
+**Files to create:** `dashboard/src/components/CommsLostButton.jsx`
+**File to modify:** `dashboard/src/App.jsx` — mount button
+**Effort:** 4 hours
+**Test:** New tests for each behavior mode. Visual: trigger comms-lost, verify assets begin independent patrol patterns.
+**Dependencies:** None
+
+---
+
+## PHASE 7: Wow Factors (Target: Week 10-12)
+*Pick 2-3 of these based on time remaining. Each is independently valuable.*
+
+### P7.1 — Pre-Scripted Scenario System
+**What:** A "scenario" system where a JSON file defines a sequence of commands with timing. A "RUN SCENARIO" button executes them automatically. This guarantees a perfect demo every time — no LLM randomness, no typing errors.
+**Implementation:**
+- Scenario JSON format:
+```json
+{
+  "name": "Harbor Patrol",
+  "steps": [
+    { "delay_seconds": 0, "type": "command", "fleet_command": { ... } },
+    { "delay_seconds": 15, "type": "command", "fleet_command": { ... } },
+    { "delay_seconds": 30, "type": "gps_mode", "mode": "degraded" },
+    { "delay_seconds": 45, "type": "spawn_contact", "waypoints": [...] },
+    { "delay_seconds": 60, "type": "comms_lost" }
+  ]
+}
+```
+- Backend: `POST /api/scenario/run` accepts a scenario name. Server dispatches commands at specified delays using asyncio tasks. Commands go directly to `fleet_manager.dispatch_command()` — bypassing LLM entirely.
+- Frontend: Dropdown or button to select and run a scenario.
+- Pre-build 2-3 scenarios that tell the perfect demo story.
+**Files to create:** `src/scenarios/runner.py`, scenario JSON files in `data/scenarios/`
+**Files to modify:** `routes.py`, `App.jsx`
+**Effort:** 6-8 hours
+**Test:** Run scenario, verify all steps execute at correct times.
+**Dependencies:** P4.1 (for contact spawning steps), P6.1 (for comms-lost steps)
+
+### P7.2 — Threat Assessment Panel
+**What:** A small panel in the sidebar showing operational summary:
+- Fleet readiness: `3/4 EXECUTING` with a progress ring
+- Highest risk: `CPA: 120m` in amber/red
+- GPS status with time since last good fix
+- Contact count: `1 CONTACT TRACKED` (if P4.1 done)
+**File to create:** `dashboard/src/components/ThreatPanel.jsx`
+**Effort:** 3-4 hours
+**Test:** Visual — verify numbers update in real-time
+**Dependencies:** P5.5 (for CPA data), P4.1 (for contact count, optional)
+
+### P7.3 — LLM Command Acknowledgment
+**What:** After the LLM parses a command, generate a brief military-style acknowledgment displayed in the mission log:
+`> COPY. Dispatching ALPHA, BRAVO, CHARLIE to patrol area. Echelon formation, 200m spacing. EAGLE-1 orbit at 150m.`
+**Implementation:** Template-based (not a second LLM call). Build the acknowledgment string from the parsed FleetCommand fields in Python.
+- New function in `fleet_commander.py`: `generate_acknowledgment(cmd: FleetCommand) -> str`
+- Return it as an additional field in CommandResponse (add `acknowledgment: Optional[str] = None` — wait, schemas are immutable. Instead, include it in the response dict outside the schema, or add it to the command panel display logic.)
+- Display in CommandPanel and/or inject into MissionLog.
+**Files to modify:** `src/fleet/fleet_commander.py` (generate ack), `src/api/routes.py` (include in response), `dashboard/src/components/CommandPanel.jsx` or `MissionLog.jsx` (display)
+**Effort:** 3-4 hours
+**Test:** Send command, verify acknowledgment text appears and accurately reflects the command.
+**Dependencies:** P1.6 (mission log echo)
+
+### P7.4 — Mission Replay Viewer
+**What:** A replay page that plays back recorded mission states from SQLite. Timeline slider at the bottom, play/pause/speed controls. Shows the same map with assets moving through recorded positions.
+**Why for Paul:** This mirrors HavocAI Orchestrator's debrief capability. It shows the system isn't just live — it records and reviews.
+**Implementation:**
+- New API endpoint: `GET /api/replay?start_time=X&end_time=Y` — returns state snapshots in order
+- New React page/component: `dashboard/src/components/ReplayViewer.jsx`
+- Reuse FleetMap component with replayed states
+- Timeline: slider from first to last timestamp, play button advances through states
+**Effort:** 8-12 hours
+**Dependencies:** MissionLogger already records states every 5 seconds. Just need to read them back.
+
+### P7.5 — Drone Camera Inset (Picture-in-Picture)
+**What:** A small window (200×150px) in the bottom-left of the map showing a zoomed-in view centered on the drone with a HUD-style overlay (crosshairs, altitude readout, heading compass). Not real camera feed — just a zoomed Leaflet view.
+**Implementation:**
+- New component: `dashboard/src/components/DroneCamera.jsx`
+- Second MapContainer inside a positioned div, centered on drone position, higher zoom level
+- HUD overlay: CSS crosshair lines, altitude/speed readout at corners
+**Effort:** 6-8 hours
+**Test:** Visual — verify inset tracks drone, HUD updates
+**Dependencies:** None
+
+---
+
+## PHASE 8: Demo Recording Prep (Target: Week 13-14)
+*Final 2 weeks before ship date.*
+
+### P8.1 — LLM Model Testing
+**What:** Test multiple model sizes for demo reliability:
+- `qwen2.5:72b` — most capable, 5-15s inference
+- `qwen2.5:32b` — mid-range, 2-5s inference
+- `qwen2.5:14b` — fastest, 1-3s inference
+Run the same 10 test commands against each. Track: parse success rate, waypoint quality, formation correctness.
+Use `LOCALFLEET_MODEL` env var to switch.
+**Effort:** 2-3 hours
+**Decision:** Choose the smallest model that reliably produces correct commands for demo scripted inputs.
+
+### P8.2 — Demo Script Finalization
+**What:** Write the exact commands for each demo beat, tested end-to-end. Record timing for each beat. Create a paper script to follow during recording.
+**Depends on:** Which polish tasks were completed — the script adapts to available features.
+
+### P8.3 — Multiple Takes
+**What:** Record 3-5 full takes. Pick the best one. Have backup takes for individual beats that can be spliced in.
+
+### P8.4 — Post-Production
+- Speed up LLM wait times at 3-4x
+- Add text overlays for technical context
+- Add music (dark ambient)
+- Title card + closing card
+- Cut to ~3 minutes
+
+---
+
+# EFFORT SUMMARY
+
+| Phase | Hours | What You Get |
+|-------|-------|-------------|
+| Phase 1: C2 Dashboard | ~12h | Professional-looking C2 interface |
+| Phase 2: GPS-Denied | ~4h | Dramatic GPS toggle moment |
+| Phase 3: Formations | ~8h | Convincing coordinated movement |
+| Phase 4: Contacts | ~12h | Full intercept/track narrative |
+| Phase 5: Atmosphere | ~16h | Every detail polished |
+| Phase 6: Comms-Lost | ~4h | Autonomous fallback behavior |
+| Phase 7: Wow Factors | ~20-30h | (pick 2-3) |
+| Phase 8: Recording | ~8h | The actual video |
+| **TOTAL** | **~84-94h** | **Demo-ready system** |
+
+At 6-7 hours/week over 14 weeks = ~84-98 hours available. It fits.
+
+---
+
+# QUICK REFERENCE: File → Task Mapping
+
+| File | Polish Tasks |
+|------|-------------|
+| `dashboard/src/App.jsx` | P1.1, P1.2, P1.5, P1.6, P1.7, P2.1-B, P6.1 |
+| `dashboard/src/components/FleetMap.jsx` | P1.3, P1.4, P2.1-A/D, P3.2, P4.1, P5.2, P5.3, P5.4, P5.6 |
+| `dashboard/src/components/CommandPanel.jsx` | P1.6, P1.8 |
+| `dashboard/src/components/MissionLog.jsx` | P1.6 |
+| `dashboard/src/styles/global.css` | P1.4, P2.1-D |
+| `src/fleet/fleet_manager.py` | P2.1-C, P3.1, P4.1, P4.2, P5.5, P6.1 |
+| `src/dynamics/drone_dynamics.py` | P4.2 |
+| `src/fleet/drone_coordinator.py` | P4.2 |
+| `src/api/routes.py` | P4.1, P5.3, P6.1 |
+| `src/api/ws.py` | P4.1 |
+| New files | P1.2(HeaderBar), P1.5(RTBButton), P1.7(MissionStatus), P4.1(contact.py), P6.1(CommsLostButton), P7.1(scenarios), P7.2(ThreatPanel), P7.4(ReplayViewer), P7.5(DroneCamera) |
+===== KICKOFF_PROMPTS.md =====
+# LOCALFLEET — Session Kickoff Prompts
+## Copy the terminal command, then paste the prompt into the Claude session
+
+---
+
+## PHASE 1, SESSION 1: UNCLASSIFIED Banner + Header Bar + Map Origin + Dark Tiles
+**Tasks: P1.1, P1.2, P1.3, P1.4**
+
+### Terminal Command:
+```bash
+cd ~/Projects/localfleet && source .venv/bin/activate && claude
+```
+
+### Prompt:
+```
+I'm building LocalFleet — a multi-domain C2 system for autonomous fleet simulation. We're in the POLISH phase now. The core system is fully built and working (102 tests passing). I need you to make the dashboard look like a real military C2 system.
+
+BEFORE YOU WRITE ANY CODE, read these files to understand the project state and rules:
+1. docs/LOCALFLEET_POLISH_PLAN.md — the full polish plan with exact specs for every task
+2. docs/LOCALFLEET_MASTER_PROMPT.md — original build context and absolute rules
+3. src/schemas.py — THE source of truth. NEVER modify this file.
+4. dashboard/src/App.jsx — current layout
+5. dashboard/src/components/FleetMap.jsx — current map component
+6. dashboard/src/styles/global.css — current styles
+
+ABSOLUTE RULES:
+- NEVER modify src/schemas.py
+- All 102 existing tests must stay green after changes
+- Don't refactor working code — only add to it or create new files
+- Don't break the WebSocket contract (FleetState JSON shape)
+
+YOUR TASKS THIS SESSION (do them in order):
+
+1. **P1.1 — UNCLASSIFIED Banner:** Add a thin green classification banner at the very bottom of the screen in App.jsx. Text: "UNCLASSIFIED // FOUO". Dark green background, green text, centered, 10px font, wide letter-spacing. See the polish plan for exact styling.
+
+2. **P1.2 — Header Bar Upgrade:** Create a new `dashboard/src/components/HeaderBar.jsx` component. Replace the inline header in App.jsx. It needs:
+   - Left: LOCALFLEET title + C2 DASHBOARD subtitle (keep existing style)
+   - Center: Zulu clock (UTC, updates every second, format "14:32:07Z") + Mission elapsed timer (starts when first command sent, format "T+00:03:42")
+   - Right: GPS mode indicator (green "GPS: FULL" or flashing amber "GPS: DENIED"), connection dot, asset count
+   - The mission timer needs state in App.jsx — add a missionStartTime state that gets set when a command succeeds. Pass it as a prop.
+
+3. **P1.3 — Map Origin Newport RI:** In FleetMap.jsx, change ORIGIN_LAT to 41.4925 and ORIGIN_LNG to -71.3270 (Newport Harbor, near Naval War College). Keep M_PER_DEG_LNG as-is (82000 is close enough for 41.5°N).
+
+4. **P1.4 — CartoDB Dark Tiles:** In FleetMap.jsx, change the TileLayer URL to "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png". Remove the className="dark-map-tiles" from the TileLayer. In global.css, remove the .dark-map-tiles filter rule.
+
+After making all changes, run the existing test suite to verify nothing is broken:
+.venv/bin/python -m pytest --tb=short -q
+
+Then tell me to start the dev servers so I can visually verify.
+```
+
+---
+
+## PHASE 1, SESSION 2: RTB Button + Mission Log Echo + Mission Status + Processing Animation
+**Tasks: P1.5, P1.6, P1.7, P1.8**
+
+### Terminal Command:
+```bash
+cd ~/Projects/localfleet && source .venv/bin/activate && claude
+```
+
+### Prompt:
+```
+I'm building LocalFleet — a multi-domain C2 system. We're in the POLISH phase. The core system works (102 tests passing). Last session I upgraded the header, map tiles, map origin, and added an UNCLASSIFIED banner.
+
+BEFORE YOU WRITE ANY CODE, read these files:
+1. docs/LOCALFLEET_POLISH_PLAN.md — full polish plan with exact specs (read tasks P1.5, P1.6, P1.7, P1.8)
+2. src/schemas.py — NEVER modify
+3. dashboard/src/App.jsx — current layout (was modified last session)
+4. dashboard/src/components/CommandPanel.jsx — command input panel
+5. dashboard/src/components/MissionLog.jsx — live event log
+6. src/api/routes.py — existing REST endpoints (has POST /return-to-base)
+
+ABSOLUTE RULES:
+- NEVER modify src/schemas.py
+- All existing tests must stay green
+- Don't break the WebSocket contract
+
+YOUR TASKS THIS SESSION (do them in order):
+
+1. **P1.5 — RTB Button:** Create `dashboard/src/components/RTBButton.jsx`. Red emergency-style button that calls POST /api/return-to-base. Mount in App.jsx sidebar between GpsDeniedToggle and MissionLog. See polish plan for exact styling.
+
+2. **P1.6 — Mission Log Echo Command Text:** When a command is sent successfully, the natural language text should appear in MissionLog as: > "the command text here". Implementation: add lastCommandText state to App.jsx, pass a setter callback to CommandPanel (called on success), pass the value to MissionLog (displayed when it changes).
+
+3. **P1.7 — Mission/Formation Status Badge:** Create `dashboard/src/components/MissionStatus.jsx`. Shows current mission type and formation as colored badges. Data comes from fleetState.active_mission and fleetState.formation. Mount in sidebar above asset cards. Show "STANDBY" in gray when no mission active.
+
+4. **P1.8 — Processing Animation:** In CommandPanel.jsx, replace the "..." on the SEND button with a processing state that shows "PROCESSING..." with elapsed time counting up (update every 100ms). Disable input during processing.
+
+After all changes, run: .venv/bin/python -m pytest --tb=short -q
+Then tell me to verify visually.
+```
+
+---
+
+## PHASE 2, SESSION 3: GPS-Denied Visual Overhaul
+**Tasks: P2.1**
+
+### Terminal Command:
+```bash
+cd ~/Projects/localfleet && source .venv/bin/activate && claude
+```
+
+### Prompt:
+```
+I'm building LocalFleet — a multi-domain C2 system. We're in POLISH phase. Phase 1 (dashboard UI) is complete. Now I need the GPS-denied toggle to be visually dramatic.
+
+BEFORE YOU WRITE ANY CODE, read these files:
+1. docs/LOCALFLEET_POLISH_PLAN.md — read task P2.1 carefully (all 4 parts)
+2. src/schemas.py — NEVER modify
+3. src/fleet/fleet_manager.py — GPS mode handling in get_fleet_state() and set_gps_mode()
+4. src/utils/gps_denied.py — degrade_position() and should_update() functions
+5. dashboard/src/components/FleetMap.jsx — GPS uncertainty circles
+6. dashboard/src/components/GpsDeniedToggle.jsx — toggle component
+7. dashboard/src/App.jsx — for adding vignette overlay
+8. dashboard/src/styles/global.css — pulse animation
+9. tests/test_gps_denied.py — existing GPS tests
+
+ABSOLUTE RULES:
+- NEVER modify src/schemas.py
+- All existing tests must stay green
+- Don't break the WebSocket contract
+
+YOUR TASKS THIS SESSION (4 parts of P2.1):
+
+**Part A — Increase noise + ring size:**
+- In GpsDeniedToggle.jsx, change noise_meters from 25.0 to 50.0 in the POST body
+- In FleetMap.jsx, change the Circle radius from position_accuracy to position_accuracy * 3
+
+**Part B — Amber screen vignette:**
+- In App.jsx, when fleetState.gps_mode === 'degraded', render an overlay div covering the entire screen with pointer-events:none, a CSS box-shadow inset creating an amber vignette at the edges: box-shadow: inset 0 0 150px rgba(245, 158, 11, 0.08)
+
+**Part C — Activate rate limiter (BACKEND):**
+This is the most important part. In fleet_manager.py:
+- Add self._last_noisy_positions = {} in __init__
+- In get_fleet_state(), when GPS is DEGRADED: for each asset, call should_update(asset_id, 1.0). If True, compute new noisy position via degrade_position() and store in _last_noisy_positions. If False, use the cached noisy position from _last_noisy_positions. This creates visible 1Hz position stutter.
+- Import should_update from src.utils.gps_denied
+
+**Part D — Verify pulse animation:**
+- Check if the CSS class gps-uncertainty-ring actually animates on Leaflet Circle elements. If it doesn't work (Leaflet renders Circles as SVG paths and the CSS animation may not apply), implement an alternative: use React state to toggle circle opacity between 0.15 and 0.05 on a 2-second interval.
+
+After all changes, run: .venv/bin/python -m pytest --tb=short -q
+Verify test_gps_denied.py still passes. If you modified fleet_manager.py, also verify test_fleet_manager.py passes.
+Then tell me to test visually.
+```
+
+---
+
+## PHASE 3, SESSION 4: Maintained Formations + Vessel Wakes
+**Tasks: P3.1, P3.2**
+
+### Terminal Command:
+```bash
+cd ~/Projects/localfleet && source .venv/bin/activate && claude
+```
+
+### Prompt:
+```
+I'm building LocalFleet — a multi-domain C2 system. We're in POLISH phase. Phases 1-2 complete (dashboard UI + GPS-denied). Now I need formations to look like real coordinated movement.
+
+BEFORE YOU WRITE ANY CODE, read these files:
+1. docs/LOCALFLEET_POLISH_PLAN.md — read tasks P3.1 and P3.2 carefully
+2. src/schemas.py — NEVER modify
+3. src/fleet/fleet_manager.py — dispatch_command() and step() methods
+4. src/fleet/formations.py — apply_formation() and compute_formation_offsets()
+5. tests/test_formations.py — 14 existing formation tests
+6. tests/test_wiring.py — 8 existing wiring tests
+7. tests/test_fleet_manager.py — 5 existing fleet manager tests
+8. dashboard/src/components/FleetMap.jsx — for vessel wakes
+
+ABSOLUTE RULES:
+- NEVER modify src/schemas.py
+- All 102 existing tests must stay green
+- Don't break formation geometry (test_formations.py tests the math)
+
+YOUR TASKS THIS SESSION:
+
+**P3.1 — Maintained Formations During Movement:**
+Currently formations are computed once at dispatch as waypoint adjustments. Vessels navigate independently to offset positions. I need followers to maintain formation relative to the leader DURING movement.
+
+Implementation in fleet_manager.py:
+- Add formation state tracking in __init__: _formation_leader, _formation_members, _formation_type, _formation_spacing
+- In dispatch_command(): when formation is not INDEPENDENT and >= 2 surface vessels, store the leader ID, member IDs, formation type, and spacing
+- In step(): when formation is active and leader is EXECUTING, each tick:
+  - Get leader's current position and heading
+  - Compute follower target positions using apply_formation() with leader's CURRENT state
+  - Update each follower's waypoints to navigate toward their formation position
+  - Convert formation positions to nautical miles for CORALL (same as dispatch_command does)
+- When leader goes IDLE, followers navigate to their final formation positions and go IDLE
+- When RTB or new command is dispatched, clear formation tracking
+
+BE CAREFUL: This is the trickiest task. Followers chasing a moving leader can oscillate. Use the formation position as the SINGLE waypoint (replace their waypoint list entirely each tick). Set follower desired_speed slightly higher than leader speed so they can catch up.
+
+FALLBACK: If this causes test failures or oscillation that you can't fix cleanly, revert the step() changes and instead just increase the default formation spacing from 200m to 350m in fleet_manager.py dispatch_command(). This makes the static waypoint-adjusted formations more visually distinct.
+
+**P3.2 — Vessel Heading Wakes:**
+In FleetMap.jsx, for each surface asset with speed > 0.5, render a short Polyline (50m) extending opposite the heading direction. Color: #3b82f6, weight: 3, opacity: 0.4. See polish plan for the math.
+
+After all changes, run: .venv/bin/python -m pytest --tb=short -q
+EVERY existing test must pass. If any test breaks, fix it or revert the breaking change.
+```
+
+---
+
+## PHASE 4, SESSION 5: Simulated Contact
+**Tasks: P4.1**
+
+### Terminal Command:
+```bash
+cd ~/Projects/localfleet && source .venv/bin/activate && claude
+```
+
+### Prompt:
+```
+I'm building LocalFleet — a multi-domain C2 system. We're in POLISH phase. Phases 1-3 complete. Now I need a simulated hostile contact that moves on the map so the demo can show intercept/track scenarios.
+
+BEFORE YOU WRITE ANY CODE, read these files:
+1. docs/LOCALFLEET_POLISH_PLAN.md — read task P4.1 carefully
+2. src/schemas.py — NEVER modify. The contact will NOT use AssetState or FleetState schemas. It's an extension.
+3. src/fleet/fleet_manager.py — where contacts will be managed
+4. src/dynamics/drone_dynamics.py — similar waypoint-following logic to reuse
+5. src/api/ws.py — WebSocket handler that sends state JSON
+6. src/api/routes.py — where new endpoint goes
+7. dashboard/src/components/FleetMap.jsx — where contact marker will render
+
+ABSOLUTE RULES:
+- NEVER modify src/schemas.py
+- All existing tests must stay green
+- Don't add contacts to FleetState schema — extend the WebSocket JSON dict AFTER model_dump()
+
+YOUR TASKS THIS SESSION:
+
+1. Create `src/simulation/__init__.py` (empty)
+
+2. Create `src/simulation/contact.py`:
+   - Contact class with: contact_id (str), x, y, heading, speed (default 3.0 m/s), waypoints (List of dicts with x,y), current_wp_index, active (bool)
+   - set_waypoints(waypoints): set waypoints and activate
+   - step(dt): move toward current waypoint (same math as DroneAgent._step_waypoint), advance index when within 5m, deactivate when waypoints exhausted
+   - get_state() -> dict: returns {"contact_id": ..., "x": ..., "y": ..., "heading": ..., "speed": ..., "active": ...}
+
+3. Modify `src/fleet/fleet_manager.py`:
+   - Import Contact
+   - Add self.contacts: Dict[str, Contact] = {} in __init__
+   - Add spawn_contact(contact_id, waypoints, speed=3.0) method: creates Contact, adds to dict
+   - Add remove_contact(contact_id) method
+   - In step(): step all active contacts
+   - Add get_contacts_state() -> list: returns [contact.get_state() for each active contact]
+
+4. Modify `src/api/ws.py`:
+   - After state.model_dump(), add contacts to the dict: state_dict["contacts"] = commander.fleet_manager.get_contacts_state()
+   - Send state_dict instead of state.model_dump()
+
+5. Modify `src/api/routes.py`:
+   - Add POST /api/spawn-contact endpoint: accepts JSON {"contact_id": "contact-1", "waypoints": [{"x": ..., "y": ...}, ...], "speed": 3.0}
+   - Add POST /api/remove-contact endpoint: accepts {"contact_id": "contact-1"}
+
+6. Modify `dashboard/src/components/FleetMap.jsx`:
+   - Accept contacts from the WebSocket data (parent passes it down)
+   - Render each active contact as a red diamond marker with label
+   - Create a red icon variant in createIcon() or a separate createContactIcon()
+
+7. Modify `dashboard/src/App.jsx`:
+   - Extract contacts from fleetState WebSocket data and pass to FleetMap
+
+8. Create `tests/test_contact.py`:
+   - Test Contact movement along waypoints
+   - Test spawn and step via FleetManager
+   - Test deactivation when waypoints exhausted
+
+After all changes: .venv/bin/python -m pytest --tb=short -q (all tests including new ones must pass)
+```
+
+---
+
+## PHASE 4, SESSION 6: Continuous Track Pattern
+**Tasks: P4.2**
+
+### Terminal Command:
+```bash
+cd ~/Projects/localfleet && source .venv/bin/activate && claude
+```
+
+### Prompt:
+```
+I'm building LocalFleet — a multi-domain C2 system. We're in POLISH phase. Last session I added simulated contacts. Now I need the drone's track pattern to continuously follow a moving target instead of flying to a static point.
+
+BEFORE YOU WRITE ANY CODE, read these files:
+1. docs/LOCALFLEET_POLISH_PLAN.md — read task P4.2
+2. src/schemas.py — NEVER modify
+3. src/dynamics/drone_dynamics.py — DroneAgent class, _step_waypoint and orbit methods
+4. src/fleet/drone_coordinator.py — assign_pattern() for TRACK
+5. src/fleet/fleet_manager.py — step() loop and contact management
+6. tests/test_drone_dynamics.py — 6 existing tests
+7. tests/test_drone_coordinator.py — 14 existing tests
+
+ABSOLUTE RULES:
+- NEVER modify src/schemas.py
+- All existing tests must stay green
+
+YOUR TASKS THIS SESSION:
+
+1. Modify `src/dynamics/drone_dynamics.py`:
+   - Add fields: track_target_x: float | None = None, track_target_y: float | None = None, track_offset: float = 50.0
+   - Add method update_track_target(x, y): sets track_target_x/y, recalculates waypoint[0] to be offset from target position (offset behind: x - offset, y - offset). If currently in TRACK pattern and IDLE (reached old target), set status back to EXECUTING.
+   - In step(): when pattern is TRACK and track target exists, after moving toward waypoint, don't go IDLE when reaching it — stay EXECUTING and keep following.
+
+2. Modify `src/fleet/drone_coordinator.py`:
+   - In assign_pattern() for TRACK: store a track_target_id (the asset_id or contact_id being tracked) on the coordinator
+   - Add method get_track_target_id() -> str | None
+
+3. Modify `src/fleet/fleet_manager.py`:
+   - In step(): after stepping the drone, if drone is in TRACK pattern and coordinator has a track_target_id:
+     - Look up the target's current position (check contacts first, then vessels)
+     - Call drone.update_track_target(target_x, target_y)
+
+4. Add tests to test_drone_dynamics.py or new test file:
+   - Test: set track pattern, update target 10 times with moving positions, verify drone follows
+   - Test: existing track behavior (static target) still works
+
+After all changes: .venv/bin/python -m pytest --tb=short -q
+```
+
+---
+
+# NOTES FOR FUTURE SESSIONS
+
+For Phases 5-8, follow the same pattern:
+1. Terminal: `cd ~/Projects/localfleet && source .venv/bin/activate && claude`
+2. Tell the AI to read `docs/LOCALFLEET_POLISH_PLAN.md` for the specific task specs
+3. Tell it to read `src/schemas.py` and the specific files being modified
+4. List the absolute rules
+5. Give the specific tasks with implementation details from the polish plan
+6. Always end with running the test suite
+
+Each session should tackle 1-3 related tasks. Keep sessions focused. Test before moving on.

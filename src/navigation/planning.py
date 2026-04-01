@@ -15,12 +15,11 @@ def waypoint_selection(Xwpt, Ywpt, x, y, i_wpt):
     int: Updated waypoint index
     """
    
-    Circ = 200/1852  # Threshold distance for selecting the next waypoint
+    Circ = 200/1852  # Threshold distance for selecting the next waypoint (~108m)
 
     for j in range(i_wpt, len(Xwpt)):
         if np.sqrt((Xwpt[j] - x)**2 + (Ywpt[j] - y)**2) < Circ:
-            if i_wpt < len(Xwpt) - 1:
-                i_wpt += 1
+            i_wpt = j + 1  # advance past this waypoint (may exceed len for completion)
 
     return i_wpt
 

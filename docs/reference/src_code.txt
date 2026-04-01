@@ -1,0 +1,3044 @@
+===== ./src/visualization/animate.py =====
+import time
+import matplotlib.pyplot as plt
+from src.visualization.rendering import animate_ship, animate_static_obstacle
+
+# Function to animate ship and obstacles
+
+def animate_step(x, y, psi, LOA_own, BOL_own, CPA_own, Xob, Yob, psiob, LOA_ob, BOL_ob, CPA_ob, Risk, Vob, step, l):
+    
+    
+    if step % 100 == 0:
+        animate_ship(x, y, psi, LOA_own * 5, BOL_own * 5, CPA_own, [0.41, 0, 0.41])
+        #plt.xlabel(r'$X$ (nmi)', fontsize=20)  # Set x-axis label
+        #plt.ylabel(r'$Y$ (nmi)', fontsize=20)  # Set y-axis label
+        #plt.xlim(15, 20)
+        #plt.ylim(-5, 2)
+        plt.draw()  # Update the plot
+        plt.pause(0.1)  
+
+
+    # Uncomment this section if you want to handle obstacles
+    if step % 400 == 0:
+        for j in range(len(Xob)):
+            obs_col = [0.0, 0.7, 0.0]
+            if Risk[j] > 0.75:
+                obs_col = [1.0, 0.0, 0.0]
+            elif Risk[j] > 0.6:
+                obs_col = [1.0, 0.6, 0.0]
+            elif Risk[j] > 0.35:
+                obs_col = [1.0, 0.9, 0.0]
+
+            if Vob[j] > 0.5:
+                if step % 100 == 0:
+                    # Define colors for ships
+                    colors = [
+                        [0, 0, 1],  # Blue
+                        [1, 0.5, 0],  # Orange
+                        [0, 1, 0]   # Green
+                    ]
+                    
+                    animate_ship(Xob[j], Yob[j], psiob[j], LOA_ob[j] * 3, BOL_ob[j] * 3, CPA_ob[j], colors[j])
+                    
+                    
+
+                    
+
+                    plt.draw()  # Update the plot
+                    plt.pause(0.1)  
+                            
+            else:
+                animate_static_obstacle(Xob[j], Yob[j], CPA_ob[j], obs_col)===== ./src/visualization/save_animation.py =====
+import cv2
+import numpy as np
+
+
+def create_video(frames, output_filename='Artemis.avi', fps=2, quality=95):
+    """
+    Create a video from a list of frames.
+
+    Parameters:
+    frames (list): List of frames (numpy arrays)
+    output_filename (str): Name of the output video file
+    fps (int): Frames per second
+    quality (int): Video quality (0-100)
+
+    Returns:
+    None
+    """
+    if not frames:
+        print("No frames to process.")
+        return
+
+    # Get the dimensions of the first frame
+    height, width = frames[0].shape[:2]
+
+    # Create VideoWriter object
+    fourcc = cv2.VideoWriter_fourcc(*'XVID')
+    out = cv2.VideoWriter(output_filename, fourcc, fps, (width, height))
+
+    for frame in frames:
+        # Ensure the frame is in the correct format (BGR)
+        if len(frame.shape) == 2:
+            frame = cv2.cvtColor(frame, cv2.COLOR_GRAY2BGR)
+        elif frame.shape[2] == 4:
+            frame = cv2.cvtColor(frame, cv2.COLOR_RGBA2BGR)
+
+        # Write the frame
+        out.write(frame)
+
+    # Release the VideoWriter
+    out.release()
+
+    print(f"Video saved as {output_filename}")
+
+# Example usage:
+# Assuming F is your list of frames (numpy arrays)
+# create_video(F, 'Artemis.avi', fps=2)
+===== ./src/visualization/rendering.py =====
+# rendering.py
+import numpy as np
+import matplotlib.pyplot as plt
+from matplotlib.patches import Polygon, Circle
+
+# Function to animate ship
+def animate_ship(x, y, psi, loa, bol, cpa, color):
+    L3 = 2*loa / 3
+    W2 = 2*bol / 2
+
+    # Calculate positions of the ship's corners
+    x_mr = x - L3 * np.cos(psi)
+    y_mr = y - L3 * np.sin(psi)
+
+    x_ar = x_mr + W2 * np.sin(psi)
+    y_ar = y_mr - W2 * np.cos(psi)
+
+    x_al = x_mr - W2 * np.sin(psi)
+    y_al = y_mr + W2 * np.cos(psi)
+
+    x_fr = x + L3 * np.cos(psi) + W2 * np.sin(psi)
+    y_fr = y + L3 * np.sin(psi) - W2 * np.cos(psi)
+
+    x_fl = x + L3 * np.cos(psi) - W2 * np.sin(psi)
+    y_fl = y + L3 * np.sin(psi) + W2 * np.cos(psi)
+
+    x_fn = x + 2 * L3 * np.cos(psi)
+    y_fn = y + 2 * L3 * np.sin(psi)
+
+    # Vertices for the polygon
+    vertices = 4*np.array([[x_ar, y_ar], [x_fr, y_fr], [x_fn, y_fn], [x_fl, y_fl], [x_al, y_al]])
+    
+    ship_polygon = Polygon(vertices, closed=True, edgecolor='black', facecolor=color)
+
+    plt.gca().add_patch(ship_polygon)  # Add polygon to plot
+    plt.axis('equal')  # Ensure equal scaling
+    #plt.show(block=True) 
+
+def animate_static_obstacle(xob, yob, cpa_ob, obs_col):
+    inner_circle = Circle((xob, yob), cpa_ob, facecolor=obs_col, edgecolor='k')
+    plt.gca().add_patch(inner_circle)  # Add inner circle
+
+    outer_circle = Circle((xob, yob), cpa_ob * 2, fill=False, linestyle=':', linewidth=1.5, edgecolor=obs_col)
+    plt.gca().add_patch(outer_circle)  # Add outer circle
+    plt.axis('equal')
+
+    #plt.gca().set_aspect('equal', 'box')  # Set aspect ratio
+    #plt.gca().set_xlim(xob - cpa_ob * 2.5, xob + cpa_ob * 2.5)  # Set x limits for obstacle
+    #plt.gca().set_ylim(yob - cpa_ob * 2.5, yob + cpa_ob * 2.5)  # Set y limits for obstacle===== ./src/visualization/comparison_plots.py =====
+import numpy as np
+import matplotlib.pyplot as plt
+from typing import List, Dict, Any
+import os
+
+def plot_kdir_comparison(time_baseline: List[float], 
+                        kdir_baseline: np.ndarray,
+                        time_llm: List[float], 
+                        kdir_llm: np.ndarray,
+                        case_number: int,
+                        output_dir: str = 'img/',
+                        llm_provider: str = 'LLM') -> str:
+    """
+    Create a clean comparison plot of Kdir values between baseline and LLM simulations.
+    
+    Args:
+        time_baseline: Time array for baseline simulation
+        kdir_baseline: Kdir values for baseline simulation
+        time_llm: Time array for LLM simulation
+        kdir_llm: Kdir values for LLM simulation
+        case_number: Simulation case number
+        output_dir: Output directory for plots
+        llm_provider: Name of LLM provider used
+    
+    Returns:
+        str: Path to saved plot file
+    """
+    
+    # Create single clean figure
+    plt.figure(figsize=(14, 8))
+    
+    # Plot Kdir comparison with beautiful styling
+    plt.plot(time_baseline, kdir_baseline, 'b-', linewidth=3, label='Simulation (Baseline)', alpha=0.8)
+    plt.plot(time_llm, kdir_llm, 'r-', linewidth=3, label=f'LLM ({llm_provider})', alpha=0.8)
+    
+    # Add horizontal reference lines
+    plt.axhline(y=0, color='gray', linestyle='--', alpha=0.6, linewidth=2)
+    plt.axhline(y=1, color='green', linestyle=':', alpha=0.6, linewidth=1)
+    plt.axhline(y=-1, color='orange', linestyle=':', alpha=0.6, linewidth=1)
+    
+    # Styling
+    plt.xlabel('Time (seconds)', fontsize=16, fontweight='bold')
+    plt.ylabel('Kdir (Turn Direction)', fontsize=16, fontweight='bold')
+    plt.title(f'Navigation Decisions Comparison - Case {case_number}', fontsize=18, fontweight='bold', pad=20)
+    
+    # Beautiful legend
+    plt.legend(loc='upper right', fontsize=14, frameon=True, fancybox=True, shadow=True)
+    
+    # Grid and styling
+    plt.grid(True, alpha=0.3, linewidth=0.5)
+    plt.ylim(-1.2, 1.2)
+    
+    # Add direction labels on the right side
+    plt.text(1.02, 1, 'Starboard\n(Right Turn)', transform=plt.gca().transAxes, 
+            verticalalignment='center', fontsize=12, fontweight='bold', color='green')
+    plt.text(1.02, 0.5, 'No Turn\n(Straight)', transform=plt.gca().transAxes, 
+            verticalalignment='center', fontsize=12, fontweight='bold', color='gray')
+    plt.text(1.02, 0, 'Port\n(Left Turn)', transform=plt.gca().transAxes, 
+            verticalalignment='center', fontsize=12, fontweight='bold', color='orange')
+    
+    # Set y-axis ticks
+    plt.yticks([-1, 0, 1], ['−1 (Port)', '0 (Straight)', '+1 (Starboard)'], fontsize=12)
+    plt.xticks(fontsize=12)
+    
+    # Tight layout
+    plt.tight_layout()
+    
+    # Save plot
+    filename = f'kdir_comparison_{llm_provider.lower()}_case_{case_number}.png'
+    filepath = os.path.join(output_dir, filename)
+    plt.savefig(filepath, dpi=300, bbox_inches='tight', facecolor='white')
+    
+    # Also save as EPS
+    eps_filename = f'kdir_comparison_{llm_provider.lower()}_case_{case_number}.eps'
+    eps_filepath = os.path.join(output_dir, eps_filename)
+    plt.savefig(eps_filepath, format='eps', bbox_inches='tight', facecolor='white')
+    
+    plt.show()
+    
+    return filepath
+
+
+def create_comparison_summary(baseline_stats: Dict[str, Any], 
+                            llm_stats: Dict[str, Any],
+                            case_number: int,
+                            output_dir: str = 'img/',
+                            llm_provider: str = 'LLM') -> str:
+    """
+    Create a summary comparison report.
+    """
+    
+    summary_text = f"""
+# Simulation Comparison Report - Case {case_number}
+
+## Configuration
+- **LLM Provider**: {llm_provider}
+- **Case Number**: {case_number}
+- **Simulation Time**: {baseline_stats.get('sim_time', 'N/A')} seconds
+
+## Navigation Behavior Comparison
+
+### Turn Commands (Kdir)
+- **Baseline Total Turns**: {baseline_stats.get('total_turns', 'N/A')}
+- **{llm_provider} Total Turns**: {llm_stats.get('total_turns', 'N/A')}
+- **Turn Agreement Rate**: {baseline_stats.get('turn_agreement', 'N/A')}
+
+### Risk Management
+- **Baseline Max Risk**: {baseline_stats.get('max_risk', 'N/A'):.3f}
+- **{llm_provider} Max Risk**: {llm_stats.get('max_risk', 'N/A'):.3f}
+- **Baseline Avg Risk**: {baseline_stats.get('avg_risk', 'N/A'):.3f}
+- **{llm_provider} Avg Risk**: {llm_stats.get('avg_risk', 'N/A'):.3f}
+
+### Performance Metrics
+- **Baseline Final Distance**: {baseline_stats.get('final_distance', 'N/A'):.2f} nm
+- **{llm_provider} Final Distance**: {llm_stats.get('final_distance', 'N/A'):.2f} nm
+- **Path Efficiency Difference**: {baseline_stats.get('path_efficiency_diff', 'N/A'):.1f}%
+
+## Analysis
+{baseline_stats.get('analysis', 'Analysis not available')}
+
+---
+Generated by Marine Vessel Simulation System
+"""
+    
+    # Save summary
+    filename = f'comparison_summary_{llm_provider.lower()}_case_{case_number}.txt'
+    filepath = os.path.join(output_dir, filename)
+    
+    with open(filepath, 'w') as f:
+        f.write(summary_text)
+    
+    return filepath===== ./src/visualization/__init__.py =====
+===== ./src/dynamics/drone_dynamics.py =====
+"""
+DroneAgent — Simple 2D+altitude waypoint follower.
+NOT real flight dynamics. Just smooth movement on the map.
+"""
+import math
+from typing import List, Optional
+from src.schemas import (
+    Waypoint, AssetState, DomainType, DronePattern,
+    AssetStatus, MissionType, GpsMode,
+)
+
+
+class DroneAgent:
+    def __init__(self, asset_id: str, x: float = 0.0, y: float = 0.0,
+                 altitude: float = 100.0):
+        self.asset_id = asset_id
+        self.x = x
+        self.y = y
+        self.altitude = altitude
+        self.target_altitude = altitude
+        self.heading = 0.0          # degrees, 0 = North
+        self.speed = 15.0           # m/s
+        self.status = AssetStatus.IDLE
+        self.mission_type: Optional[MissionType] = None
+        self.waypoints: List[Waypoint] = []
+        self.current_wp_index = 0
+        self.pattern: Optional[DronePattern] = None
+        self._orbit_angle = 0.0     # radians, for orbit pattern
+        self._orbit_center: Optional[Waypoint] = None
+        self._orbit_radius = 150.0  # meters
+
+    def set_waypoints(self, waypoints: List[Waypoint],
+                      pattern: Optional[DronePattern] = None):
+        self.waypoints = list(waypoints)
+        self.current_wp_index = 0
+        self.pattern = pattern
+        self.status = AssetStatus.EXECUTING if waypoints else AssetStatus.IDLE
+        if pattern == DronePattern.ORBIT and waypoints:
+            self._orbit_center = waypoints[0]
+            self._orbit_angle = 0.0
+
+    def step(self, dt: float):
+        if self.status not in (AssetStatus.EXECUTING, AssetStatus.RETURNING) or not self.waypoints:
+            return
+
+        # Smooth altitude transition
+        alt_diff = self.target_altitude - self.altitude
+        if abs(alt_diff) > 0.5:
+            self.altitude += math.copysign(min(5.0 * dt, abs(alt_diff)), alt_diff)
+
+        if self.pattern == DronePattern.ORBIT and self._orbit_center:
+            self._step_orbit(dt)
+        else:
+            self._step_waypoint(dt)
+
+    def _step_waypoint(self, dt: float):
+        wp = self.waypoints[self.current_wp_index]
+        dx, dy = wp.x - self.x, wp.y - self.y
+        dist = math.sqrt(dx * dx + dy * dy)
+
+        if dist < 2.0:  # within threshold
+            self.current_wp_index += 1
+            if self.current_wp_index >= len(self.waypoints):
+                if self.pattern == DronePattern.SWEEP:
+                    self.current_wp_index = 0  # loop sweep
+                else:
+                    self.status = AssetStatus.IDLE
+            return
+
+        self.heading = math.degrees(math.atan2(dx, dy)) % 360
+        move = min(self.speed * dt, dist)
+        self.x += move * math.sin(math.radians(self.heading))
+        self.y += move * math.cos(math.radians(self.heading))
+
+    def _step_orbit(self, dt: float):
+        c = self._orbit_center
+        angular_speed = self.speed / self._orbit_radius
+        self._orbit_angle += angular_speed * dt
+        self.x = c.x + self._orbit_radius * math.cos(self._orbit_angle)
+        self.y = c.y + self._orbit_radius * math.sin(self._orbit_angle)
+        self.heading = (math.degrees(self._orbit_angle) + 90) % 360
+
+    def get_state(self) -> AssetState:
+        return AssetState(
+            asset_id=self.asset_id,
+            domain=DomainType.AIR,
+            x=self.x, y=self.y,
+            heading=self.heading,
+            speed=self.speed if self.status in (AssetStatus.EXECUTING, AssetStatus.RETURNING) else 0.0,
+            altitude=self.altitude,
+            status=self.status,
+            mission_type=self.mission_type,
+            current_waypoint_index=self.current_wp_index,
+            total_waypoints=len(self.waypoints),
+            drone_pattern=self.pattern,
+        )
+===== ./src/dynamics/controller.py =====
+def controller(psi_p, psi, r, v_p, b, ui_psi1, Ts):
+    """
+    Controller function for yaw and speed control.
+
+    Parameters:
+    psi_p (float): Desired yaw angle
+    psi (float): Current yaw angle
+    r (float): Yaw rate
+    v_p (float): Desired speed
+    u (float): Current speed (not used in this function)
+    ui_psi1 (float): Previous integral error for yaw
+    ts (float): Time step
+
+    Returns:
+    tuple: (tau_c, v_c, ui_psi1)
+        tau_c (float): Yaw control input
+        v_c (float): Speed control input
+        ui_psi1 (float): Updated integral error for yaw
+    """
+
+    # Yaw Controller
+    kp_yaw = 100.0
+    kd_yaw = -500.0
+    ki_yaw = 0.0
+
+    # For unstable mode (commented out in the original)
+    # kp_yaw = -100.0
+    # kd_yaw = 500.0
+    # ki_yaw = 0
+
+    e_psi = psi_p - psi
+    ui_psi = ui_psi1 + Ts * e_psi
+    ui_psi1 = ui_psi
+
+    tau_c = kp_yaw * e_psi + ki_yaw * ui_psi + kd_yaw * r
+
+    # Speed Controller
+    v_c = v_p
+
+    return tau_c, v_c, ui_psi1
+===== ./src/dynamics/vessel_dynamics.py =====
+import numpy as np
+
+
+def vessel_dynamics(x_0, inputs):
+    """
+    Calculate the vessel dynamics.
+
+    Parameters:
+    x_0 (numpy.array): Initial state [x, y, psi, r, b, u]
+    inputs (numpy.array): Control inputs [tau_c, u_c]
+
+    Returns:
+    numpy.array: State derivatives [x_dot, y_dot, psi_dot, r_dot, b_dot, u_dot]
+    """
+    x, y, psi, r, b, u = x_0
+    tau_c, u_c = inputs
+
+    k_psi = 0.01
+    t_psi = 30.0
+
+    k_v = 1.0
+    t_v = 50.0
+
+    t_b = 20 * t_psi
+
+    x_dot = u_c * np.cos(psi)
+    y_dot = u_c * np.sin(psi)
+    psi_dot = r
+
+    w_r = 0
+    w_b = 0.5 * np.random.randn()
+
+    # Nomoto model
+    r_dot = -(1/t_psi) * r + (1/t_psi) * k_psi * (tau_c - b) + w_r
+    b_dot = -(1/t_b) * b + w_b
+    u_dot = -(1/t_v) * u + (1/t_v) * k_v * u_c
+
+    x_dot = np.array([x_dot, y_dot, psi_dot, r_dot, b_dot, u_dot])
+
+    return x_dot
+===== ./src/dynamics/__init__.py =====
+===== ./src/dynamics/actuator_modeling.py =====
+import numpy as np
+
+
+def actuator_modeling(tau_c, sat_amp_s):
+    tau_ac = tau_c
+
+    if abs(tau_c) > sat_amp_s:
+        tau_ac = np.sign(tau_c) * sat_amp_s
+
+    return tau_ac
+===== ./src/llm/ollama_client.py =====
+"""
+Ollama LLM Client — Local inference for multi-domain fleet commands.
+Sends natural language to Ollama, gets back structured FleetCommand JSON.
+"""
+import os
+import httpx
+from ollama import chat
+from src.schemas import FleetCommand
+
+
+MODEL = os.environ.get("LOCALFLEET_MODEL", "qwen2.5:72b")
+
+SYSTEM_PROMPT = """You are a multi-domain naval fleet command parser. Convert natural language into structured JSON.
+
+FLEET ROSTER (you MUST only use these exact asset_id values):
+  Surface: "alpha" (domain:"surface"), "bravo" (domain:"surface"), "charlie" (domain:"surface")
+  Air:     "eagle-1" (domain:"air")
+
+CRITICAL RULES:
+1. If the user mentions "eagle", "eagle-1", "drone", or "aerial", you MUST include an asset entry with asset_id:"eagle-1", domain:"air", with altitude (50-200m) and drone_pattern set.
+2. If the user says "all assets" or "all vessels and drone", include ALL FOUR assets.
+3. "All vessels" = alpha + bravo + charlie (surface only). "All assets" = all four including eagle-1.
+4. For air assets: ALWAYS set altitude, drone_pattern (orbit/sweep/track/station), and speed 10-20.
+5. For surface assets: speed 3-8 m/s, domain:"surface".
+6. Generate waypoints in meters, range 0-2000.
+7. Pick the best mission_type: patrol, search, escort, loiter, aerial_recon.
+8. If no formation specified, use "independent".
+
+EXAMPLE — user says "All vessels patrol 600,400 in echelon. Eagle-1 orbit over 900,600 at 150m":
+The assets array MUST contain 4 entries: alpha(surface), bravo(surface), charlie(surface), eagle-1(air with drone_pattern:"orbit", altitude:150)."""
+
+
+def test_connection() -> bool:
+    """Ping Ollama to verify it's running."""
+    try:
+        r = httpx.get("http://localhost:11434/api/tags", timeout=5.0)
+        return r.status_code == 200
+    except Exception:
+        return False
+
+
+def parse_fleet_command(natural_language: str) -> FleetCommand:
+    """Parse natural language into a FleetCommand via local LLM.
+
+    Retries up to 3 times on failure. Raises on total failure.
+    """
+    last_error = None
+    for attempt in range(3):
+        try:
+            response = chat(
+                model=MODEL,
+                messages=[
+                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {"role": "user", "content": natural_language},
+                ],
+                format=FleetCommand.model_json_schema(),
+                options={"temperature": 0},
+            )
+            command = FleetCommand.model_validate_json(response.message.content)
+            command.raw_text = natural_language
+            return command
+        except Exception as e:
+            last_error = e
+    raise RuntimeError(f"Failed after 3 attempts: {last_error}")
+===== ./src/llm/__init__.py =====
+===== ./src/core/simulation.py =====
+import numpy as np
+import matplotlib.pyplot as plt
+from matplotlib import animation
+import argparse
+import os
+from pathlib import Path
+from src.navigation.planning import waypoint_selection, planning
+from src.dynamics.vessel_dynamics import vessel_dynamics
+from src.core.integration import integration
+from src.navigation.obstacle_sim import obstacle_sim
+from src.risk_assessment.cpa_calculations import cpa_calculations
+from src.risk_assessment.cpa_calculations_0speed import cpa_calculations_0speed
+from src.dynamics.controller import controller
+from src.dynamics.actuator_modeling import actuator_modeling
+from src.risk_assessment.risk_calculations import risk_calculations
+from src.navigation.reactive_avoidance import reactive_avoidance
+from src.visualization.animate import animate_step
+from src.utils.imazu_cases import get_obstacles, nautical_to_meters, obstacle_cases, get_obstacle_data
+import matplotlib.ticker as ticker
+# Optional LLM imports
+try:
+    from src.decision_making.multi_llm_decision import COLREGSInterpreter, VesselState
+    LLM_AVAILABLE = True
+except ImportError:
+    LLM_AVAILABLE = False
+    COLREGSInterpreter = None
+    VesselState = None
+from typing import List, Union, Optional
+
+def extract_kdir_from_response(response: str) -> int:
+    """
+    Extract K_dir from LLM response
+    Returns:
+        +1 for "turn starboard"
+        -1 for "turn port"
+        0 for "stand on" or default
+    """
+    response_lower = response.lower()
+    
+    if "turn starboard" in response_lower or "alter course to starboard" in response_lower or "starboard" in response_lower:
+        return 1
+    elif "turn port" in response_lower or "alter course to port" in response_lower or "port" in response_lower:
+        return -1
+    else:  # "stand on" or any other action
+        return 0
+
+def run_colm(risk: Union[float, List[float], np.ndarray],
+            distance: Union[float, List[float], np.ndarray],
+            bearing: Union[float, List[float], np.ndarray],
+            dcpa: Union[float, List[float], np.ndarray],
+            tcpa: Union[float, List[float], np.ndarray],
+            time_idx: int = 0,
+            provider: str = None) -> str:
+    """
+    Run COLM decision making for any number of vessels.
+    
+    Args:
+        risk: Risk value(s) for vessel(s)
+        distance: Distance(s) to vessel(s) in nautical miles
+        bearing: Relative bearing(s) to vessel(s) in degrees
+        dcpa: Distance at Closest Point of Approach in nautical miles
+        tcpa: Time to Closest Point of Approach in minutes
+        time_idx: Current time index (default: 0)
+    
+    Returns:
+        str: COLREGs decision with explanation
+    """
+    if not LLM_AVAILABLE:
+        return "LLM not available - using default behavior"
+    
+    # Convert inputs to numpy arrays if they aren't already
+    risk = np.atleast_1d(risk)
+    distance = np.atleast_1d(distance)
+    bearing = np.atleast_1d(bearing)
+    dcpa = np.atleast_1d(dcpa)
+    tcpa = np.atleast_1d(tcpa)
+    
+    # Create interpreter instance with specified provider
+    interpreter = COLREGSInterpreter(provider=provider)
+    
+    # Create vessel states
+    vessels = [
+        VesselState(float(r), float(d), float(b), float(dc), float(tc))
+        for r, d, b, dc, tc in zip(risk, distance, bearing, dcpa, tcpa)
+    ]
+    
+    # Get decision
+    return interpreter.make_decision(vessels, time_idx)
+
+def load_env_file():
+    """Load environment variables from .env file if it exists."""
+    env_file = Path(__file__).parent.parent.parent / '.env'
+    
+    if env_file.exists():
+        with open(env_file, 'r') as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith('#'):
+                    if '=' in line:
+                        key, value = line.split('=', 1)
+                        os.environ[key] = value
+
+def parse_args():
+    parser = argparse.ArgumentParser(description='Marine Vehicle Simulation')
+    parser.add_argument('--case_number', type=int, default=1, help='Simulation case number')
+    parser.add_argument('--sim_time', type=float, default=450.0, help='Simulation time in seconds')
+    parser.add_argument('--dt', type=float, default=0.1, help='Time step size')
+    parser.add_argument('--no_animation', action='store_true', help='Disable animation')
+    parser.add_argument('--output_dir', type=str, default='img/', help='Output directory for results')
+    parser.add_argument('--llm', type=int, default=0, help='Use LLM for decision making (0=off, 1=on)')
+    parser.add_argument('--llm_provider', type=str, default=None, 
+                       help='LLM provider to use (openai, claude). If not specified, uses LLM_PROVIDER from .env')
+    parser.add_argument('--compare', action='store_true', 
+                       help='Run comparison between LLM and baseline simulation')
+    return parser.parse_args()
+
+def run_simulation(args=None, return_data=False):
+    # Load environment variables from .env file if it exists
+    load_env_file()
+    
+    # Parse command line arguments if not provided
+    if args is None:
+        args = parse_args()
+    
+    # Check if comparison mode is requested (only if not called from comparison)
+    if args.compare and not return_data:
+        from src.core.comparison_simulation import run_comparison_simulation
+        return run_comparison_simulation(args)
+    
+    # Initialize parameters
+    t = 0.0  # initial time
+    dt = args.dt  # time step
+    Ts = dt  # sampling time
+    N = round(args.sim_time / dt)
+    Animation = not args.no_animation
+
+    # Initial conditions
+    x_v, y_v, psi_v = 0.0, 0.0, np.radians(0)  # initial position and heading
+    r_v, b_v, u_v = 0.0, 0.0, 0.0  # initial rates and velocity
+    ui_psi1 = 0.0  # initial integral of yaw error
+
+    X_0 = np.array([x_v, y_v, psi_v, r_v, b_v, u_v])
+    X = X_0.copy()
+
+    Sat_amp_s = 20
+    i = 0
+
+    # Waypoints
+    Xwpt = [0, nautical_to_meters(40)/1852]
+    Ywpt = [0, 0]
+    i_wpt = 1
+
+    # Vessel parameters
+    LOA_own, BOL_own = 30, 16
+    CPA_own = LOA_own * 2
+    
+    # Get obstacle data
+    Xob, Yob, Vob, psiob = get_obstacle_data(args.case_number)
+    LOA_ob = [80] * len(Xob)
+    BOL_ob = [30] * len(Xob)
+    CPA_ob = [LOA_ob[0] * 1] * len(Xob)
+
+    # Initialize arrays
+    time = []
+    Kdir = np.ones(N)  # Initialize Kdir array
+    x, y, psi = np.zeros(N), np.zeros(N), np.zeros(N)
+    r, b, u = np.zeros(N), np.zeros(N), np.zeros(N)
+    v_c = np.zeros(N)
+    u_p, tau_c, tau_ac = np.zeros(N), np.zeros(N), np.zeros(N)
+    psi_p, psi_wp, psi_oa = np.zeros(N), np.zeros(N), np.zeros(N)
+    V_x, V_y = np.zeros(N), np.zeros(N)
+    x_nmi, y_nmi = np.zeros(N), np.zeros(N)  # Add nautical mile arrays
+    # i_wpt is already initialized above as 1
+    
+    Xobs, Yobs, Vxobs, Vyobs = (np.zeros((N, len(Xob))) for _ in range(4))
+    DCPA, TCPA, Vrel, alpha, psi_Vrel = (np.zeros((N, len(Xob))) for i in range(5))
+    DCPA[:1], TCPA[:1] = 1000, 1000
+    DCPA2, TCPA2, Vrel2, alpha2, psi_Vrel2 = (np.zeros((N, len(Xob))) for _ in range(5))
+    Distance_ob, Bearing_ob, Risk = (np.zeros((N, len(Xob))) for _ in range(3))
+
+    # Prepare for animation if enabled
+    if Animation:
+        fig, ax = plt.subplots()
+        plt.plot(Xwpt, Ywpt, 'ob', Xwpt, Ywpt, ':b', linewidth=1.0)
+        plt.grid(True)
+        writer = animation.PillowWriter(fps=5)
+
+    # Main simulation loop
+    if Animation:
+        with writer.saving(fig, f"{args.output_dir}/scenario_animation{args.case_number}.gif", dpi=200):
+            for i in range(len(x)):
+                # Record current state
+                time.append(t)
+                x[i] = X[0]
+                y[i] = X[1]
+                psi[i] = X[2]
+                r[i] = X[3]
+                b[i] = X[4]
+                u[i] = X[5]
+                X_0 = X.copy()
+
+                # Speed command
+                u_p[i] = 43.3
+
+                # Convert to nautical miles
+                METERS_TO_NMI = (1 / 1852)
+                x_nmi = [xi * METERS_TO_NMI for xi in x]
+                y_nmi = [yi * METERS_TO_NMI for yi in y]
+                Xob_nmi = [xo * METERS_TO_NMI for xo in Xob]
+                Yob_nmi = [yo * METERS_TO_NMI for yo in Yob]
+                LOA_own_nmi = LOA_own * METERS_TO_NMI
+                BOL_own_nmi = BOL_own * METERS_TO_NMI
+                LOA_ob_nmi = [loa * METERS_TO_NMI for loa in LOA_ob]
+                BOL_ob_nmi = [bol * METERS_TO_NMI for bol in BOL_ob]
+
+                # Path planning and collision avoidance
+                i_wpt = waypoint_selection(Xwpt, Ywpt, x_nmi[i], y_nmi[i], i_wpt)
+                psi_wp[i] = planning(Xwpt, Ywpt, x_nmi[i], y_nmi[i], i_wpt)
+                psi_oa[i], w_B, w_R, Distance_ob[i, :], Bearing_ob[i, :] = reactive_avoidance(
+                    Xob_nmi, Yob_nmi, x_nmi[i], y_nmi[i], psi[i], t)
+                
+
+
+                # extract_kdir_from_response function moved to global scope
+                
+
+                # Run COLM decision making (function moved to global scope)
+
+                # Overall yaw command with Kdir
+                psi_p[i] = psi_wp[i] + Kdir[i] * psi_oa[i]
+
+                # Controller and actuator
+                tau_c[i], v_c[i], ui_psi1 = controller(
+                    psi_p[i], psi[i], r[i], u_p[i], b, ui_psi1, Ts)
+                tau_ac[i] = actuator_modeling(tau_c[i], Sat_amp_s)
+                
+                # System dynamics
+                inputs = [tau_ac[i], v_c[i]]
+                X_dot = vessel_dynamics(X_0, inputs)
+                X = integration(X_0, X_dot, dt)
+                V_x[i] = X_dot[0]
+                V_y[i] = X_dot[1]
+
+                # Obstacles simulation
+                Xob, Yob, Vxob, Vyob = obstacle_sim(Xob, Yob, Vob, psiob, dt)
+                Xobs[i, :] = Xob
+                Yobs[i, :] = Yob
+                Vxobs[i, :] = Vxob
+                Vyobs[i, :] = Vyob
+
+                # Risk analysis
+                for j in range(len(Xob)):
+                    if i >= 1:
+                        Distance_ob[i, j] = np.sqrt(
+                            (np.array(Xobs[i, j]) - x[i])**2 + 
+                            (np.array(Yobs[i, j]) - y[i])**2)
+                        
+                        DCPA[i, j], TCPA[i, j], Vrel[i, j], alpha[i, j], psi_Vrel[i, j] = cpa_calculations(
+                            x[i], y[i], x[i-1], y[i-1], Xobs[i, j], Yobs[i, j], 
+                            Xobs[i-1, j], Yobs[i-1, j], Ts
+                        )
+
+                        DCPA2[i, j], TCPA2[i, j], Vrel2[i, j], alpha2[i, j], psi_Vrel2[i, j] = cpa_calculations_0speed(
+                            x[i], y[i], Xobs[i, j], Yobs[i, j], V_x[i], V_y[i], 
+                            Vxobs[i, j], Vyobs[i, j], Distance_ob[i, j]
+                        )
+
+                    Risk[i, j] = risk_calculations(
+                        DCPA[i, j], TCPA[i, j], Distance_ob[i, j], Vrel[i, j])
+
+                if args.llm == 1:
+                    if not LLM_AVAILABLE:
+                        if i == 0:  # Print warning only once
+                            print("Warning: LLM requested but langchain_openai not available. Running without LLM.")
+                    else:
+                        if i % 200 == 0:
+                            decision = run_colm(
+                                Risk[i, :],
+                                Distance_ob[i, :],
+                                Bearing_ob[i, :],
+                                DCPA[i, :],
+                                TCPA[i, :],
+                                provider=args.llm_provider
+                            )
+                            print(f"\nStep {i}: COLM Decision:")
+                            print(decision)
+                            print(f"Risk: {Risk[i, :]}")
+                            
+                            new_kdir = extract_kdir_from_response(decision)
+                            Kdir[i] = new_kdir
+                            #print(f"Extracted Kdir value: {new_kdir}")
+                        elif i > 0:
+                            pass
+                            #Kdir[i] = Kdir[i-1]  # Maintain previous value between updates
+                        
+               
+
+                # Animation
+                l = len(Risk[i, :])
+                animate_step(
+                    x_nmi[i], y_nmi[i], psi[i],
+                    LOA_own_nmi, BOL_own_nmi, CPA_own,
+                    Xob_nmi, Yob_nmi, psiob,
+                    LOA_ob_nmi, BOL_ob_nmi, CPA_ob,
+                    Risk[i, :], Vob, i, l
+                )
+                
+                if i % 101 == 0 and i != 0:
+                    writer.grab_frame()
+
+                t += dt
+
+            # Save animation plots
+            plt.title(f'Case {args.case_number}', fontsize=25)
+            plt.savefig(f'{args.output_dir}/simulation_result{args.case_number}.eps', format='eps')
+            plt.savefig(f'{args.output_dir}/simulation_result{args.case_number}.png')
+            plt.show(block=True)
+    else:
+        # Run simulation without animation
+        for i in range(len(x)):
+            # Record current state
+            time.append(t)
+            x[i] = X[0]
+            y[i] = X[1]
+            psi[i] = X[2]
+            r[i] = X[3]
+            b[i] = X[4]
+            u[i] = X[5]
+
+            # Convert to nautical miles
+            x_nmi[i] = x[i] / 1852
+            y_nmi[i] = y[i] / 1852
+
+            # Speed command
+            u_p[i] = 43.3
+
+            # Convert to nautical miles
+            METERS_TO_NMI = (1 / 1852)
+            x_nmi = [xi * METERS_TO_NMI for xi in x]
+            y_nmi = [yi * METERS_TO_NMI for yi in y]
+            Xob_nmi = [xo * METERS_TO_NMI for xo in Xob]
+            Yob_nmi = [yo * METERS_TO_NMI for yo in Yob]
+            LOA_own_nmi = LOA_own * METERS_TO_NMI
+            BOL_own_nmi = BOL_own * METERS_TO_NMI
+            LOA_ob_nmi = [loa * METERS_TO_NMI for loa in LOA_ob]
+            BOL_ob_nmi = [bol * METERS_TO_NMI for bol in BOL_ob]
+
+            # Path planning and collision avoidance
+            i_wpt = waypoint_selection(Xwpt, Ywpt, x_nmi[i], y_nmi[i], i_wpt)
+            psi_wp[i] = planning(Xwpt, Ywpt, x_nmi[i], y_nmi[i], i_wpt)
+            psi_oa[i], w_B, w_R, Distance_ob[i, :], Bearing_ob[i, :] = reactive_avoidance(
+                Xob_nmi, Yob_nmi, x_nmi[i], y_nmi[i], psi[i], t)
+
+            # Overall yaw command with Kdir
+            psi_p[i] = psi_wp[i] + Kdir[i] * psi_oa[i]
+
+            # Controller and actuator
+            tau_c[i], v_c[i], ui_psi1 = controller(
+                psi_p[i], psi[i], r[i], u_p[i], b, ui_psi1, Ts)
+            tau_ac[i] = actuator_modeling(tau_c[i], Sat_amp_s)
+
+            # Store current state
+            X_0 = X.copy()
+            
+            # System dynamics
+            inputs = [tau_ac[i], v_c[i]]
+            X_dot = vessel_dynamics(X_0, inputs)
+            X = integration(X_0, X_dot, dt)
+            V_x[i] = X_dot[0]
+            V_y[i] = X_dot[1]
+
+            # Obstacles simulation
+            Xob, Yob, Vxob, Vyob = obstacle_sim(Xob, Yob, Vob, psiob, dt)
+            Xobs[i, :] = Xob
+            Yobs[i, :] = Yob
+            Vxobs[i, :] = Vxob
+            Vyobs[i, :] = Vyob
+
+            # Risk analysis
+            for j in range(len(Xob)):
+                if i >= 1:
+                    Distance_ob[i, j] = np.sqrt(
+                        (np.array(Xobs[i, j]) - x[i])**2 + 
+                        (np.array(Yobs[i, j]) - y[i])**2)
+                    
+                    DCPA[i, j], TCPA[i, j], Vrel[i, j], alpha[i, j], psi_Vrel[i, j] = cpa_calculations(
+                        x[i], y[i], x[i-1], y[i-1], Xobs[i, j], Yobs[i, j], 
+                        Xobs[i-1, j], Yobs[i-1, j], Ts
+                    )
+
+                    DCPA2[i, j], TCPA2[i, j], Vrel2[i, j], alpha2[i, j], psi_Vrel2[i, j] = cpa_calculations_0speed(
+                        x[i], y[i], Xobs[i, j], Yobs[i, j], V_x[i], V_y[i], 
+                        Vxobs[i, j], Vyobs[i, j], Distance_ob[i, j]
+                    )
+
+                    Risk[i, j] = risk_calculations(
+                        DCPA[i, j], TCPA[i, j], Distance_ob[i, j], Vrel[i, j])
+
+            if args.llm == 1:
+                if not LLM_AVAILABLE:
+                    if i == 0:  # Print warning only once
+                        print("Warning: LLM requested but langchain_openai not available. Running without LLM.")
+                else:
+                    if i % 200 == 0:
+                        decision = run_colm(
+                            Risk[i, :],
+                            Distance_ob[i, :],
+                            Bearing_ob[i, :],
+                            DCPA[i, :],
+                            TCPA[i, :],
+                            provider=args.llm_provider
+                        )
+                     
+                        print(decision)
+                        
+                        new_kdir = extract_kdir_from_response(decision)
+                        Kdir[i] = new_kdir
+                    elif i > 0:
+                        pass
+
+            t += dt
+
+    #print(Kdir)
+    # Plot DCPA, TCPA, Risk plots
+    fig, axs = plt.subplots(2, 2)
+    for i in range(len(Xob)):
+        axs[0, 0].plot(time, DCPA[:, i] / 1852, linewidth=1.0)
+        axs[0, 1].plot(time, Distance_ob[:, i]/1852, linewidth=1.0)
+        axs[1, 0].plot(time, TCPA[:, i], linewidth=1.0, label=f'TS{i+1}')
+        axs[1, 1].plot(time, Risk[:, i], linewidth=1.0)
+
+    # Configure plots
+    axs[0, 0].set_xlim([0, args.sim_time])
+    axs[0, 0].set_ylabel(r'$DCPA$ (nmi)', fontsize=20)
+    axs[0, 0].tick_params(axis='both', labelsize=15)
+
+    axs[0, 1].set_xlim([0, args.sim_time])
+    axs[0, 1].set_ylim([0, 2000/1852])
+    axs[0, 1].set_ylabel(r'$R$ (nmi)', fontsize=20)
+    axs[0, 1].tick_params(axis='both', labelsize=15)
+    
+
+    axs[1, 0].set_xlim([0, args.sim_time])
+    axs[1, 0].set_xlabel('Time (s)', fontsize=20)
+    axs[1, 0].set_ylabel(r'$TCPA$ (s)', fontsize=20)
+    axs[1, 0].tick_params(axis='both', labelsize=15)
+    axs[1, 0].legend()
+
+    axs[1, 1].set_xlim([0, args.sim_time])
+    axs[1, 1].set_ylim([0, 1])
+    axs[1, 1].set_xlabel('Time (s)', fontsize=20)
+    axs[1, 1].set_ylabel(r'$Risk$', fontsize=20)
+    axs[1, 1].tick_params(axis='both', labelsize=15)
+
+    fig.suptitle(f'Case {args.case_number}', fontsize=20)
+    plt.tight_layout()
+    plt.savefig(f'{args.output_dir}/plot_dcpa_tcpa_risk_{args.case_number}.eps', format='eps')
+    plt.savefig(f'{args.output_dir}/plot_dcpa_tcpa_risk_{args.case_number}.png')
+    plt.show()
+
+    # Return data if requested (for comparison mode)
+    if return_data:
+        # Calculate Kdir for comparison based on actual control values
+        # Kdir = 0 when Kdir[i] * psi_oa[i] == 0 (no turn)
+        # Kdir = +1 when Kdir[i] * psi_oa[i] > 0 (starboard)
+        # Kdir = -1 when Kdir[i] * psi_oa[i] < 0 (port)
+        comparison_kdir = np.zeros(len(Kdir))
+        for i in range(len(Kdir)):
+            control_value = Kdir[i] * psi_oa[i]
+            if control_value > 0:
+                comparison_kdir[i] = 1  # Starboard
+            elif control_value < 0:
+                comparison_kdir[i] = -1  # Port
+            else:
+                comparison_kdir[i] = 0  # No turn
+        
+        return {
+            'time': time,
+            'x': x,
+            'y': y,
+            'psi': psi,
+            'kdir': comparison_kdir,  # Use calculated comparison values
+            'risk': Risk,
+            'dcpa': DCPA,
+            'tcpa': TCPA,
+            'distance_ob': Distance_ob,
+            'obstacles_x': Xobs[-1, :] if len(Xobs) > 0 else [],
+            'obstacles_y': Yobs[-1, :] if len(Yobs) > 0 else [],
+            'simulation_type': 'main_simulation'
+        }
+
+""""
+    # Plot Kdir values
+    plt.figure()
+    plt.plot(time, Kdir, 'b', linewidth=1.5)
+    plt.title(f'Case {args.case_number}')
+    plt.xlabel('Time (s)')
+    plt.ylabel(r'$K_{dir}$')
+    plt.grid(True)
+    plt.savefig(f'{args.output_dir}/plot_kdir_{args.case_number}.png', dpi=300)
+    plt.show()"""
+
+if __name__ == "__main__":
+    run_simulation()===== ./src/core/__init__.py =====
+===== ./src/core/integration.py =====
+def integration(x_0, x_dot, dt):
+    """
+    Perform first-order Euler integration.
+
+    Parameters:
+    x_0 (float or numpy.array): Initial state
+    x_dot (float or numpy.array): Rate of change
+    dt (float): Time step
+
+    Returns:
+    float or numpy.array: Integrated state
+    """
+    return x_0 + x_dot * dt
+===== ./src/navigation/__init__.py =====
+===== ./src/navigation/reactive_avoidance.py =====
+import numpy as np
+from scipy.special import expit  # For the sigmoid function
+
+
+def zmf(x, a, b):
+    """
+    Z-shaped membership function.
+    """
+    y = np.zeros_like(x)
+    y[x <= a] = 1
+    mask = (a < x) & (x < (a + b) / 2)
+    y[mask] = 1 - 2 * ((x[mask] - a) / (b - a))**2
+    mask = ((a + b) / 2 <= x) & (x < b)
+    y[mask] = 2 * ((x[mask] - b) / (b - a))**2
+    return y
+
+
+def reactive_avoidance(x_ob, y_ob, x, y, psi, t):
+    """
+    Perform reactive avoidance.
+
+    Parameters:
+    x_ob, y_ob (array-like): Positions of obstacles
+    x, y (float): Current position of the vessel
+    psi (float): Current heading of the vessel
+    t (float): Current time (not used in this function)
+
+    Returns:
+    tuple: (psi_oa, w_b, w_r, distance_ob, bearing_ob)
+        psi_oa (float): Avoidance heading
+        w_b (numpy.array): Bearing weights
+        w_r (numpy.array): Range weights
+        distance_ob (numpy.array): Distances to obstacles
+        bearing_ob (numpy.array): Bearings to obstacles
+    """
+    a = 600.0/1852
+    b = 1200/1852
+
+    x_distro = np.arange(-90, 90.1, 0.1)
+    c = 0
+    sig = 80 * np.pi / 180
+
+    distance_ob = np.sqrt((np.array(x_ob) - x)**2 + (np.array(y_ob) - y)**2)
+    #print(distance_ob)
+    #distance_ob = sum(distance_ob)
+    los_ob = np.arctan2((np.array(y_ob) - y), (np.array(x_ob) - x))
+
+    bearing_ob = psi - los_ob
+    w_r = zmf(distance_ob, a, b)
+    w_b = -np.exp(-(bearing_ob**2) / (2 * sig**2))
+
+    psi_oa = np.sum(w_r * w_b) * 2
+
+    return psi_oa, w_b, w_r, distance_ob, bearing_ob
+===== ./src/navigation/planning.py =====
+import numpy as np
+
+def waypoint_selection(Xwpt, Ywpt, x, y, i_wpt):
+    """
+    Updates the waypoint index based on the vessel's position.
+
+    Parameters:
+    Xwpt (array-like): X-coordinates of waypoints
+    Ywpt (array-like): Y-coordinates of waypoints
+    x (float): Current x-position of the vessel
+    y (float): Current y-position of the vessel
+    i_wpt (int): Current waypoint index
+
+    Returns:
+    int: Updated waypoint index
+    """
+   
+    Circ = 200/1852  # Threshold distance for selecting the next waypoint
+
+    for j in range(i_wpt, len(Xwpt)):
+        if np.sqrt((Xwpt[j] - x)**2 + (Ywpt[j] - y)**2) < Circ:
+            if i_wpt < len(Xwpt) - 1:
+                i_wpt += 1
+
+    return i_wpt
+
+def planning(Xwpt, Ywpt, x, y, i_wpt):
+    """
+    Calculates the planned heading angle based on waypoints.
+
+    Parameters:
+    Xwpt (array-like): X-coordinates of waypoints
+    Ywpt (array-like): Y-coordinates of waypoints
+    x (float): Current x-position of the vessel
+    y (float): Current y-position of the vessel
+    i_wpt (int): Current waypoint index
+
+    Returns:
+    float: Planned heading angle (psi_p)
+    """
+    
+    # Ensure i_wpt is valid
+    if i_wpt == 0:
+        return None  # Handle case for the first waypoint
+
+    Xewpt = Xwpt[i_wpt] - x
+    Yewpt = Ywpt[i_wpt] - y
+    # print(Xewpt, Yewpt)
+
+    L = np.sqrt((Xwpt[i_wpt] - Xwpt[i_wpt - 1])**2 + (Ywpt[i_wpt] - Ywpt[i_wpt - 1])**2)
+    S = (Xewpt * (Xwpt[i_wpt] - Xwpt[i_wpt - 1]) + Yewpt * (Ywpt[i_wpt] - Ywpt[i_wpt - 1])) / L
+
+    delta_p = np.arctan2(Ywpt[i_wpt] - Ywpt[i_wpt - 1], Xwpt[i_wpt] - Xwpt[i_wpt - 1]) - np.arctan2(Yewpt, Xewpt)
+    err = S * np.tan(delta_p)
+    #print(err)
+    
+    rho = 2200/1852
+
+    psi_p = np.arctan2(Yewpt, Xewpt) - np.arctan(err / rho) 
+
+    return psi_p
+===== ./src/navigation/obstacle_sim.py =====
+import numpy as np
+# Assuming you've defined the integration function in a separate file
+from src.core.integration import integration
+
+
+def obstacle_sim(x_ob0, y_ob0, v_ob, psi_ob, dt):
+    """
+    Simulate obstacle movement.
+
+    Parameters:
+    x_ob0 (array-like): Initial x-positions of obstacles
+    y_ob0 (array-like): Initial y-positions of obstacles
+    v_ob (array-like): Velocities of obstacles
+    psi_ob (array-like): Heading angles of obstacles
+    dt (float): Time step
+
+    Returns:
+    tuple: (x_ob, y_ob, vx_ob, vy_ob)
+        x_ob (numpy.array): Updated x-positions of obstacles
+        y_ob (numpy.array): Updated y-positions of obstacles
+        vx_ob (numpy.array): x-components of obstacle velocities
+        vy_ob (numpy.array): y-components of obstacle velocities
+    """
+    x_ob = np.zeros_like(x_ob0)
+    y_ob = np.zeros_like(y_ob0)
+    vx_ob = np.zeros_like(v_ob)
+    vy_ob = np.zeros_like(v_ob)
+
+    for i in range(len(x_ob0)):
+        x_0 = np.array([x_ob0[i], y_ob0[i]])
+
+        vx_ob[i] = v_ob[i] * np.cos(psi_ob[i])
+        vy_ob[i] = v_ob[i] * np.sin(psi_ob[i])
+
+        x_dot = np.array([vx_ob[i], vy_ob[i]])
+
+        x = integration(x_0, x_dot, dt)
+
+        x_ob[i] = x[0]
+        y_ob[i] = x[1]
+
+    return x_ob, y_ob, vx_ob, vy_ob
+===== ./src/__init__.py =====
+===== ./src/utils/gps_denied.py =====
+"""
+GPS-Denied Degradation Engine.
+Adds position noise and reduces update rate when GPS is degraded.
+Cosmetic — signals awareness of contested environments.
+"""
+import random
+import time
+from src.schemas import GpsMode
+
+
+def degrade_position(x: float, y: float, noise_meters: float = 25.0
+                     ) -> tuple[float, float, float]:
+    """Add Gaussian noise to a position. Returns (noisy_x, noisy_y, accuracy)."""
+    noisy_x = x + random.gauss(0, noise_meters)
+    noisy_y = y + random.gauss(0, noise_meters)
+    return noisy_x, noisy_y, noise_meters
+
+
+_last_update: dict[str, float] = {}
+
+
+def should_update(asset_id: str, update_rate_hz: float = 1.0) -> bool:
+    """Rate-limit updates per asset. Returns True if enough time has passed."""
+    now = time.time()
+    interval = 1.0 / update_rate_hz
+    last = _last_update.get(asset_id, 0.0)
+    if now - last >= interval:
+        _last_update[asset_id] = now
+        return True
+    return False
+===== ./src/utils/__init__.py =====
+===== ./src/utils/imazu_cases.py =====
+import numpy as np
+
+def nautical_to_meters(nm_value):
+    return nm_value * 1852
+
+obstacle_cases = {
+    "Case 1": [[[nautical_to_meters(6), nautical_to_meters(0)], 180]],
+    "Case 2": [[[nautical_to_meters(5), nautical_to_meters(-2.14)], 90]],
+    "Case 3": [[[nautical_to_meters(3), nautical_to_meters(0)], 0]],
+    "Case 4": [[[nautical_to_meters(3.44), nautical_to_meters(1.55 + 0.08 )], 295]],
+    "Case 5": [[[nautical_to_meters(5), nautical_to_meters(-2.0-0.14)], 90], [[nautical_to_meters(7-0.05), nautical_to_meters(0)], 180]],
+    "Case 6": [[[nautical_to_meters(3.4), nautical_to_meters(-1.5 + 0.03)], 45], [[nautical_to_meters(3), nautical_to_meters(-0.35-0.04)], 10]],
+    "Case 7": [[[nautical_to_meters(3), nautical_to_meters(0)], 0], [[nautical_to_meters(3.4), nautical_to_meters(-1.5+0.01)], 45]],
+    "Case 8": [[[nautical_to_meters(5), nautical_to_meters(-2.13)], 90], [[nautical_to_meters(7), nautical_to_meters(0)], 180]],
+    "Case 9": [[[nautical_to_meters(3.4), nautical_to_meters(-1.5 + 0.03)], 45], [[nautical_to_meters(5), nautical_to_meters(-2.1 - 0.05)], 90]],
+    "Case 10": [[[nautical_to_meters(3), nautical_to_meters(0.35)], 350], [[nautical_to_meters(4.4), nautical_to_meters(-2.1 + 0.20)], 90]],
+    "Case 11": [[[nautical_to_meters(5), nautical_to_meters(2.1)], -90], [[nautical_to_meters(3.4), nautical_to_meters(-1.5)], 45]],
+    "Case 12": [[[nautical_to_meters(7), nautical_to_meters(0)], 180], [[nautical_to_meters(3), nautical_to_meters(0.3+0.05)], -10], [[nautical_to_meters(3.44), nautical_to_meters(-1.55+0.05)], 45]],
+    "Case 13": [[[nautical_to_meters(6), nautical_to_meters(0)], 180], [[nautical_to_meters(3), nautical_to_meters(0.3+0.05)], 350], [[nautical_to_meters(3.4), nautical_to_meters(1.5+0.05)], 295]],
+    "Case 14": [[[nautical_to_meters(3.4), nautical_to_meters(-1.5)], 45], [[nautical_to_meters(3), nautical_to_meters(-0.4)], 10], [[nautical_to_meters(5), nautical_to_meters(-2.1-0.05)], 90]],
+    "Case 15": [[[nautical_to_meters(3), nautical_to_meters(0)], 0], [[nautical_to_meters(3.4), nautical_to_meters(-1.5)], 45], [[nautical_to_meters(5), nautical_to_meters(-2.1-0.05)], 90]],
+    "Case 16": [[[nautical_to_meters(3.4), nautical_to_meters(1.5-0.03)], -45], [[nautical_to_meters(5), nautical_to_meters(2.1 + 0.04)], -90], [[nautical_to_meters(5), nautical_to_meters(-2.1 + -0.05)], 90]],
+    "Case 17": [[[nautical_to_meters(3), nautical_to_meters(0)], 0], [[nautical_to_meters(3), nautical_to_meters(0.3+0.05)], -10], [[nautical_to_meters(3.4), nautical_to_meters(-1.5)], 45]],
+    "Case 18": [[[nautical_to_meters(3.3), nautical_to_meters(-0.3 - 0.1)], 10], [[nautical_to_meters(3.4), nautical_to_meters(-1.5+0.05)], 45], [[nautical_to_meters(6.5), nautical_to_meters(-1.5)], 135]],
+    "Case 19": [[[nautical_to_meters(3), nautical_to_meters(-0.3 - 0.07)], 10], [[nautical_to_meters(3), nautical_to_meters(0.3+0.05)], -10], [[nautical_to_meters(6.5), nautical_to_meters(-1.5-0.03)], 135]],
+    "Case 20": [[[nautical_to_meters(3), nautical_to_meters(0)], 0], [[nautical_to_meters(3), nautical_to_meters(-0.3-0.05)], 10], [[nautical_to_meters(4.4), nautical_to_meters(-2.1 + 0.25)], 90]],
+    "Case 21": [[[nautical_to_meters(3-0.3), nautical_to_meters(-0.3-0.05)], 10], [[nautical_to_meters(3-0.3), nautical_to_meters(0.3+0.02)], -10], [[nautical_to_meters(4.4), nautical_to_meters(-1.9)], 90]],
+    "Case 22": [[[nautical_to_meters(3), nautical_to_meters(0)], 0], [[nautical_to_meters(3.94), nautical_to_meters(-1.6-0.13)], 45], [[nautical_to_meters(5), nautical_to_meters(-2.01-0.15)], 90]],
+    "Case 23": [[[nautical_to_meters(4.243), nautical_to_meters(2.243)], -75]],
+    
+}
+
+# Function to get obstacles for a specific case
+def get_obstacles(case_number):
+    case_key = f"Case {case_number}"
+    return obstacle_cases.get(case_key, [])
+
+
+def get_obstacle_data(case_number):
+    """
+    Convert obstacle case data to simulation format
+    Args:
+        case_number (int): The case number to use (1-22)
+    Returns:
+        Xob, Yob (lists): X and Y positions in meters
+        Vob (list): Velocities in m/s 
+        psiob (numpy array): Angles in radians
+    """
+    # Get obstacle data for the case
+    obstacles = get_obstacles(case_number)
+    
+    # Initialize empty lists
+    Xob = []
+    Yob = []
+    psiob = []
+    
+    # Default velocity (you may want to adjust this)
+    Vob = [18.52] * len(obstacles)  # Assuming 9.5 m/s for all obstacles
+    
+    # Extract positions and angles from obstacles
+    for obstacle in obstacles:
+        position = obstacle[0]  # Get [x,y] position
+        angle = obstacle[1]    # Get angle in degrees
+        
+        Xob.append(position[0])  # X position in meters
+        Yob.append(position[1])  # Y position in meters
+        psiob.append(np.radians(angle))  # Convert angle to radians
+    
+    return Xob, Yob, Vob, np.array(psiob)
+
+===== ./src/utils/zmf.py =====
+import numpy as np
+
+def zmf(x, a, b):
+    """
+    Z-shaped membership function based on the piecewise definition.
+    """
+    if a >= b:
+        raise ValueError("Parameter `a` must be smaller than `b`.")
+    
+    # Apply the piecewise function using direct if-else conditions
+    y = np.zeros_like(x, dtype=float)
+    
+    # Condition 1: x <= a
+    y[x <= a] = 1
+
+    # Condition 2: a < x <= (a + b) / 2
+    mask_1 = (a < x) & (x <= (a + b) / 2)
+    y[mask_1] = 1 - 2 * ((x[mask_1] - a) / (b - a))**2
+
+    # Condition 3: (a + b) / 2 < x <= b
+    mask_2 = ((a + b) / 2 < x) & (x <= b)
+    y[mask_2] = 2 * ((x[mask_2] - b) / (b - a))**2
+
+    # Condition 4: x > b
+    y[x > b] = 0
+
+    return y===== ./src/utils/validation.py =====
+import re
+from typing import Optional, Tuple, Dict
+from dataclasses import dataclass
+from src.decision_making.decision_makingllm1 import decision_making_llm
+
+@dataclass
+class ValidatedResponse:
+    rule: str
+    situation_type: str
+    action: str
+    explanation: str
+    is_fallback: bool = False
+
+class ResponseValidator:
+    # Valid actions that can be taken
+    VALID_ACTIONS = [
+        "Stand on, no action",
+        "Give-way, turn to starboard",
+        "Give-way, turn to port"
+    ]
+    
+    # Valid situation types
+    VALID_SITUATIONS = ["head-on", "overtaking", "crossing"]
+    
+    @staticmethod
+    def parse_response(llm_response: str) -> Optional[ValidatedResponse]:
+        """
+        Parse and validate the LLM response format.
+        Returns None if the response is invalid.
+        """
+        try:
+            # Expected format: "Rule X (situation type), Action: [action], explanation: [explanation]"
+            pattern = r"Rule (\d+) \(([\w-]+)\), Action: ([\w\s,-]+), explanation: (.+)"
+            match = re.match(pattern, llm_response.strip())
+            
+            if not match:
+                return None
+                
+            rule, situation, action, explanation = match.groups()
+            
+            # Validate each component
+            if (situation.lower() not in ResponseValidator.VALID_SITUATIONS or
+                action.strip() not in ResponseValidator.VALID_ACTIONS):
+                return None
+                
+            return ValidatedResponse(
+                rule=rule,
+                situation_type=situation.lower(),
+                action=action.strip(),
+                explanation=explanation.strip()
+            )
+            
+        except Exception as e:
+            print(f"Error parsing LLM response: {e}")
+            return None
+
+def get_fallback_response(
+    risk: float,
+    distance: float,
+    rel_bearing: float,
+    is_turning: bool,
+    initial_situation: Optional[str]
+) -> ValidatedResponse:
+    """
+    Generate a safe fallback response when LLM response is invalid.
+    Uses simple rule-based logic to ensure safe operation.
+    """
+    # If already turning, continue until safe
+    if is_turning:
+        return ValidatedResponse(
+            rule="FB",
+            situation_type=initial_situation or "unknown",
+            action="Give-way, turn to starboard",
+            explanation="Fallback: Continuing turn until safe conditions met",
+            is_fallback=True
+        )
+    
+    # Emergency conditions - high risk and close distance
+    if risk > 0.7 and distance < 300:
+        return ValidatedResponse(
+            rule="FB",
+            situation_type=initial_situation or "unknown",
+            action="Give-way, turn to starboard" or "Give-way, turn to port",
+            explanation="Fallback: Emergency maneuver due to high risk and close range",
+            is_fallback=True
+        )
+    
+    # Default safe response
+    return ValidatedResponse(
+        rule="FB",
+        situation_type=initial_situation or "unknown",
+        action="Stand on, no action",
+        explanation="Fallback: Maintaining course due to safe conditions",
+        is_fallback=True
+    )
+
+def enhanced_decision_making_llm(
+    risk: float,
+    distance: float,
+    rel_bearing: float,
+    dcpa: float,
+    tcpa: float,
+    idx: int
+) -> str:
+    """
+    Enhanced version of decision_making_llm with response validation and fallback.
+    """
+    global current_maneuver
+    
+    # Original LLM call
+    llm_response = decision_making_llm(risk, distance, rel_bearing, dcpa, tcpa, idx)
+    
+    # Validate the response
+    validator = ResponseValidator()
+    validated_response = validator.parse_response(llm_response)
+    
+    # If validation fails, use fallback
+    if validated_response is None:
+        fallback_response = get_fallback_response(
+            risk=risk,
+            distance=distance,
+            rel_bearing=rel_bearing,
+            is_turning=current_maneuver['is_turning'],
+            initial_situation=current_maneuver['initial_situation']
+        )
+        
+        # Log the fallback for monitoring
+        print(f"WARNING: Invalid LLM response, using fallback. Original response: {llm_response}")
+        
+        # Convert fallback response to string format matching original
+        return (f"Rule {fallback_response.rule} ({fallback_response.situation_type}), "
+                f"Action: {fallback_response.action}, "
+                f"explanation: {fallback_response.explanation}")
+    
+    return llm_response
+
+# Example usage and testing
+def test_response_validation():
+    validator = ResponseValidator()
+    
+    # Test valid response
+    valid_response = "Rule 15 (crossing), Action: Stand on, no action, explanation: Low risk, target on port side"
+    result = validator.parse_response(valid_response)
+    assert result is not None
+    
+    # Test invalid response
+    invalid_response = "Invalid format response"
+    result = validator.parse_response(invalid_response)
+    assert result is None===== ./src/risk_assessment/cpa_calculations_0speed.py =====
+import numpy as np
+
+
+def cpa_calculations_0speed(x, y, x_obs, y_obs, v_x, v_y, vx_ob, vy_ob, distance_ob):
+    """
+    Calculate Closest Point of Approach (CPA) parameters.
+
+    Parameters:
+    x, y (float): Position of the vessel
+    x_obs, y_obs (float): Position of the obstacle
+    v_x, v_y (float): Velocity components of the vessel
+    vx_ob, vy_ob (float): Velocity components of the obstacle
+    distance_ob (float): Distance to the obstacle
+
+    Returns:
+    tuple: (DCPA, TCPA, relative_speed, alpha, psi_Vrel)
+        DCPA (float): Distance at Closest Point of Approach
+        TCPA (float): Time to Closest Point of Approach
+        relative_speed (float): Relative speed between vessel and obstacle
+        alpha (float): Angle between line of sight and relative velocity
+        psi_Vrel (float): Angle of relative velocity
+    """
+
+    v_x_rel = vx_ob - v_x
+    v_y_rel = vy_ob - v_y
+
+    relative_speed = np.sqrt(v_x_rel**2 + v_y_rel**2)
+
+    psi_Vrel = np.arctan2(vy_ob - v_y, vx_ob - v_x)
+
+    psi_LOS = np.arctan2(y - y_obs, x - x_obs)
+
+    alpha = psi_LOS - psi_Vrel
+
+    DCPA = distance_ob * np.sin(alpha)
+    TCPA = distance_ob * np.cos(alpha) / relative_speed
+
+    return DCPA, TCPA, relative_speed, alpha, psi_Vrel
+===== ./src/risk_assessment/cpa_calculations2.py =====
+import numpy as np
+
+
+def cpa_calculations2(v_x, v_y, vx_ob, vy_ob, psi, psi_ob, distance_ob, bearing_ob):
+    """
+    Calculate Closest Point of Approach (CPA) parameters using velocities and angles.
+
+    Parameters:
+    v_x, v_y (float): Velocity components of the vessel
+    vx_ob, vy_ob (float): Velocity components of the obstacle
+    psi (float): Heading angle of the vessel
+    psi_ob (float): Heading angle of the obstacle
+    distance_ob (float): Distance to the obstacle
+    bearing_ob (float): Bearing to the obstacle
+
+    Returns:
+    tuple: (DCPA, TCPA, v_rel, psi_rel, alpha)
+        DCPA (float): Distance at Closest Point of Approach
+        TCPA (float): Time to Closest Point of Approach
+        v_rel (float): Relative velocity between vessel and obstacle
+        psi_rel (float): Relative heading angle
+        alpha (float): Angle between line of sight and relative velocity
+    """
+
+    psi = -(psi - np.pi/2)
+    psi_ob = -(psi_ob - np.pi/2)
+
+    v = np.sqrt(v_x**2 + v_y**2)
+    v_ob = np.sqrt(vx_ob**2 + vy_ob**2)
+
+    v_rel = np.sqrt(v**2 + v_ob**2 - 2*v*v_ob*np.cos(psi - psi_ob))
+
+    if psi < psi_ob:
+        psi_rel = psi - \
+            np.arccos((v_rel**2 + v_ob**2 - v**2) / (2 * v_rel * v))
+    else:
+        psi_rel = psi + \
+            np.arccos((v_rel**2 + v_ob**2 - v**2) / (2 * v_rel * v))
+
+    alpha = psi_rel - psi - bearing_ob
+
+    DCPA = abs(distance_ob * np.sin(alpha))
+    TCPA = abs((distance_ob / v_rel) * np.cos(alpha))
+
+    return DCPA, TCPA, v_rel, psi_rel, alpha
+===== ./src/risk_assessment/__init__.py =====
+===== ./src/risk_assessment/cpa_calculations.py =====
+import numpy as np
+
+
+def cpa_calculations(x, y, x_1, y_1, x_obs, y_obs, x_obs_1, y_obs_1, ts):
+    """
+    Calculate Closest Point of Approach (CPA) parameters using positions.
+
+    Parameters:
+    x, y (float): Current position of the vessel
+    x_1, y_1 (float): Previous position of the vessel
+    x_obs, y_obs (float): Current position of the obstacle
+    x_obs_1, y_obs_1 (float): Previous position of the obstacle
+    ts (float): Time step
+
+    Returns:
+    tuple: (DCPA, TCPA, v_rel, alpha, psi_v_rel)
+        DCPA (float): Distance at Closest Point of Approach
+        TCPA (float): Time to Closest Point of Approach
+        v_rel (float): Relative velocity between vessel and obstacle
+        alpha (float): Angle between line of sight and relative velocity
+        psi_v_rel (float): Angle of relative velocity
+    """
+
+    x_rel_1 = x_1 - x_obs_1
+    y_rel_1 = y_1 - y_obs_1
+
+    x_rel = x - x_obs
+    y_rel = y - y_obs
+
+    v_rel = np.sqrt((x_rel - x_rel_1)**2 + (y_rel - y_rel_1)**2) / ts
+
+    psi_LOS = np.arctan2(y - y_obs, x - x_obs)
+
+    psi_v_rel = np.arctan2(-(y_rel - y_rel_1), -(x_rel - x_rel_1))
+
+    alpha = psi_LOS - psi_v_rel
+
+    dist = np.sqrt((x - x_obs)**2 + (y - y_obs)**2)
+
+    DCPA = dist * np.sin(alpha)
+    TCPA = (dist * np.cos(alpha)) / v_rel
+
+    return DCPA, TCPA, v_rel, alpha, psi_v_rel
+===== ./src/risk_assessment/risk_calculations.py =====
+import numpy as np
+import sys
+import os
+sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+from src.utils.zmf import zmf
+
+
+def risk_calculations(dcpa, tcpa, distance_ob, v_rel):
+    """
+    Calculate risk based on DCPA, TCPA, and Distance.
+
+    Parameters:
+    dcpa (array-like): Distance at Closest Point of Approach
+    tcpa (array-like): Time to Closest Point of Approach
+    distance_ob (array-like): Distance to obstacles
+    v_rel (array-like): Relative velocity (not used in this function)
+
+    Returns:
+    numpy.array: Calculated risk for each obstacle
+    """
+    dcpa = np.asarray(dcpa)
+    tcpa = np.asarray(tcpa)
+    distance_ob = np.asarray(distance_ob)
+    
+    a_dcpa = 443.0/1852
+    b_dcpa = 926/1852
+
+    a_tcpa = 180/3600
+    b_tcpa = 360/3600
+
+    a_dist = 148.16/1852
+    b_dist = 463.0/1852
+
+ 
+    risk_dcpa = zmf(np.abs(dcpa), a_dcpa, b_dcpa)
+    risk_tcpa = zmf(np.abs(tcpa), a_tcpa, b_tcpa)
+    risk_dist = zmf(distance_ob, a_dist, b_dist)
+
+    risk = (risk_dcpa + risk_tcpa + risk_dist) / 3
+
+    return risk
+===== ./src/decision_making/__init__.py =====
+===== ./src/decision_making/decision_making.py =====
+import numpy as np
+
+
+def decision_making(x, y, psi, x_ob, y_ob, psi_ob, v_rel, u, risk):
+    """
+    Make collision avoidance decisions based on COLREG rules.
+
+    Parameters:
+    x, y (float): Position of the vessel
+    psi (float): Heading angle of the vessel
+    x_ob, y_ob (array-like): Positions of the obstacles
+    psi_ob (array-like): Heading angles of the obstacles
+    v_rel (float): Relative velocity
+    u (float): Speed of the vessel
+    risk (array-like): Risk levels for each obstacle
+
+    Returns:
+    tuple: (colreg_no, heading_dir, speed_level, relative_bearing_ob)
+        colreg_no (int): COLREG rule number
+        heading_dir (int): Heading direction (-1: port, 0: maintain, 1: starboard)
+        speed_level (int): Speed level
+        relative_bearing_ob (array): Relative bearings to obstacles
+    """
+
+    colreg_no = 0
+    heading_dir = 1  # 0: Head-on, 1: move to starboard, -1: move to port
+    speed_level = 0
+
+    distance_ob = np.sqrt((np.array(x_ob) - x)**2 + (np.array(y_ob) - y)**2)
+    los_ob = np.arctan2((np.array(y_ob) - y), (np.array(x_ob) - x))
+
+    relative_bearing_ob = psi - los_ob
+
+    for i in range(len(x_ob)):
+        if abs(relative_bearing_ob[i]) <= 6 * np.pi / 180:
+            # Head-on (overtake/move to starboard)
+            if v_rel >= u:
+                # Head-on move to starboard
+                colreg_no = 14
+                heading_dir = 1
+            else:
+                # Head-on Overtake
+                colreg_no = 13
+                heading_dir = 1  # or -1 based on the risk
+
+        elif 6 * np.pi / 180 < relative_bearing_ob[i] <= 112 * np.pi / 180:
+            # Crossing - Give way
+            colreg_no = 15.1
+            heading_dir = 1
+
+        elif -118 * np.pi / 180 <= relative_bearing_ob[i] < -6 * np.pi / 180:
+            # Crossing - Stand on
+            colreg_no = 15.2
+            heading_dir = 0
+
+        elif 112 * np.pi / 180 < relative_bearing_ob[i] or relative_bearing_ob[i] < -118 * np.pi / 180:
+            # Overtaking - Stand on
+            if v_rel >= u:
+                # Head-on move to starboard
+                colreg_no = 13
+                heading_dir = 0
+            else:
+                # Head-on Overtake
+                colreg_no = 13
+                heading_dir = 0  # or -1 based on the risk
+
+    return colreg_no, heading_dir, speed_level, relative_bearing_ob
+===== ./src/schemas.py =====
+"""
+LocalFleet Data Contracts v2.0 — Multi-Domain
+THE source of truth for all modules.
+Every module imports from this file. DO NOT define data structures elsewhere.
+
+v2.0 Changes:
+- Added DomainType enum (SURFACE, AIR)
+- Asset-generic naming (AssetCommand, AssetState)
+- Altitude field for air domain
+- GPS-denied degradation fields
+- DronePattern enum for aerial behaviors
+"""
+from pydantic import BaseModel, Field
+from typing import List, Optional
+from enum import Enum
+from datetime import datetime
+
+
+# ============================================================
+# ENUMS — Shared across all modules
+# ============================================================
+
+class DomainType(str, Enum):
+    """Which domain this asset operates in."""
+    SURFACE = "surface"    # Vessels — uses CORALL dynamics
+    AIR = "air"            # Drones — uses drone_dynamics.py
+
+class MissionType(str, Enum):
+    """The 5 mission types LocalFleet supports. No more."""
+    PATROL = "patrol"
+    SEARCH = "search"
+    ESCORT = "escort"
+    LOITER = "loiter"
+    AERIAL_RECON = "aerial_recon"
+
+class FormationType(str, Enum):
+    """How surface vessels arrange relative to each other."""
+    ECHELON = "echelon"
+    LINE_ABREAST = "line"
+    COLUMN = "column"
+    SPREAD = "spread"
+    INDEPENDENT = "independent"
+
+class DronePattern(str, Enum):
+    """How a drone operates over an area."""
+    ORBIT = "orbit"
+    SWEEP = "sweep"
+    TRACK = "track"
+    STATION = "station"
+
+class AssetStatus(str, Enum):
+    """Current operational state of any asset."""
+    IDLE = "idle"
+    EXECUTING = "executing"
+    AVOIDING = "avoiding"       # COLREGS avoidance (surface only)
+    RETURNING = "returning"
+    ERROR = "error"
+
+class GpsMode(str, Enum):
+    """GPS availability state."""
+    FULL = "full"
+    DEGRADED = "degraded"
+
+
+# ============================================================
+# COMMANDS — What the operator sends IN
+# ============================================================
+
+class Waypoint(BaseModel):
+    """A point in 2D space (meters, local frame)."""
+    x: float
+    y: float
+
+class AssetCommand(BaseModel):
+    """
+    Command for a single asset (surface OR air).
+    The domain field determines which dynamics engine processes it.
+    """
+    asset_id: str               # "alpha", "bravo", "charlie", "eagle-1"
+    domain: DomainType          # SURFACE or AIR
+    waypoints: List[Waypoint]
+    speed: float = 5.0          # m/s (surface ~5, drone ~15)
+    altitude: Optional[float] = None  # meters — only for AIR domain
+    behavior: str = "waypoint"  # "waypoint", "loiter", "search", "orbit", "sweep", "track"
+    drone_pattern: Optional[DronePattern] = None  # Only for AIR domain
+
+class FleetCommand(BaseModel):
+    """
+    THE central command object. The LLM produces this from natural
+    language input. Every module that processes commands accepts this.
+    Now supports BOTH surface and air assets in a single command.
+    """
+    mission_type: MissionType
+    assets: List[AssetCommand]  # Can contain mixed SURFACE + AIR
+    formation: FormationType = FormationType.INDEPENDENT
+    spacing_meters: float = 200.0
+    colregs_compliance: bool = True
+    comms_lost_behavior: str = "return_to_base"
+    raw_text: Optional[str] = None
+
+
+# ============================================================
+# STATE — What the simulation sends OUT
+# ============================================================
+
+class AssetState(BaseModel):
+    """
+    Current state of one asset (surface or air).
+    Sent via WebSocket to the React dashboard every tick.
+    """
+    asset_id: str
+    domain: DomainType
+    x: float
+    y: float
+    heading: float              # Degrees, 0 = North
+    speed: float
+    altitude: Optional[float] = None
+    status: AssetStatus
+    mission_type: Optional[MissionType] = None
+    current_waypoint_index: int = 0
+    total_waypoints: int = 0
+    risk_level: float = 0.0
+    cpa: Optional[float] = None
+    tcpa: Optional[float] = None
+    drone_pattern: Optional[DronePattern] = None
+    gps_mode: GpsMode = GpsMode.FULL
+    position_accuracy: float = 1.0
+
+class FleetState(BaseModel):
+    """
+    State of the entire fleet. Sent via WebSocket every tick (4Hz).
+    The React dashboard receives this exact JSON shape.
+    """
+    timestamp: float
+    assets: List[AssetState]
+    active_mission: Optional[MissionType] = None
+    formation: FormationType = FormationType.INDEPENDENT
+    gps_mode: GpsMode = GpsMode.FULL
+
+
+# ============================================================
+# EVENTS — What gets logged
+# ============================================================
+
+class MissionEvent(BaseModel):
+    """A logged event for mission replay."""
+    timestamp: float
+    event_type: str             # "command", "state", "decision", "risk", "gps_change"
+    asset_id: Optional[str] = None
+    domain: Optional[DomainType] = None
+    data: dict
+    created_at: datetime = Field(default_factory=datetime.now)
+
+
+# ============================================================
+# API — Request/Response shapes for FastAPI endpoints
+# ============================================================
+
+class CommandRequest(BaseModel):
+    """POST /api/command — what the dashboard sends."""
+    text: str
+    source: str = "text"
+
+class CommandResponse(BaseModel):
+    """POST /api/command — what the server responds with."""
+    success: bool
+    fleet_command: Optional[FleetCommand] = None
+    error: Optional[str] = None
+    llm_response_time_ms: Optional[float] = None
+
+class GpsDeniedRequest(BaseModel):
+    """POST /api/gps-mode — toggle GPS degradation."""
+    mode: GpsMode
+    noise_meters: float = 25.0
+    update_rate_hz: float = 1.0
+===== ./src/voice/__init__.py =====
+===== ./src/voice/whisper_local.py =====
+"""
+Local Whisper transcription via mlx-whisper (Apple Silicon optimized).
+Model: whisper-small (~500MB, cached after first download).
+"""
+import os
+
+import mlx_whisper
+
+MODEL = "mlx-community/whisper-large-v3-turbo"
+
+
+def transcribe_audio(audio_path: str) -> str:
+    """Transcribe a WAV/audio file to text using local Whisper model.
+
+    Args:
+        audio_path: Path to the audio file.
+
+    Returns:
+        Transcribed text string.
+
+    Raises:
+        FileNotFoundError: If audio_path does not exist.
+        RuntimeError: If transcription fails.
+    """
+    if not os.path.exists(audio_path):
+        raise FileNotFoundError(f"Audio file not found: {audio_path}")
+
+    try:
+        result = mlx_whisper.transcribe(audio_path, path_or_hf_repo=MODEL)
+        return result["text"].strip()
+    except Exception as e:
+        raise RuntimeError(f"Transcription failed: {e}") from e
+===== ./src/api/server.py =====
+"""
+FastAPI application — LocalFleet backend.
+CORS-enabled, mounts routes and WebSocket handler.
+"""
+from typing import TYPE_CHECKING
+
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+
+from src.fleet.fleet_commander import FleetCommander
+from src.logging.mission_logger import MissionLogger
+from src.api.routes import create_router
+from src.api.ws import create_ws_router
+
+if TYPE_CHECKING:
+    pass
+
+
+def create_app(
+    commander: FleetCommander | None = None,
+    logger: MissionLogger | None = None,
+) -> FastAPI:
+    """Factory: build and return the FastAPI app."""
+    logger = logger or MissionLogger()
+    commander = commander or FleetCommander(logger=logger)
+
+    app = FastAPI(title="LocalFleet", version="1.0.0")
+
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+
+    # Store commander and logger on app state for routes/ws to access
+    app.state.commander = commander
+    app.state.logger = logger
+
+    app.include_router(create_router(), prefix="/api")
+    app.include_router(create_ws_router())
+
+    return app
+
+
+app = create_app()
+===== ./src/api/__init__.py =====
+===== ./src/api/ws.py =====
+"""
+WebSocket handler — streams FleetState JSON at 4Hz.
+Each connected client gets state updates every 250ms.
+The simulation advances one tick per broadcast.
+State snapshots are logged every LOG_INTERVAL ticks (~5 seconds).
+"""
+import asyncio
+
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+
+
+DT = 0.25  # Simulation timestep (250ms = 4Hz)
+LOG_INTERVAL = 20  # Log state every 20 ticks (5 seconds)
+
+
+def create_ws_router() -> APIRouter:
+    router = APIRouter()
+
+    @router.websocket("/ws")
+    async def websocket_endpoint(websocket: WebSocket):
+        await websocket.accept()
+        commander = websocket.app.state.commander
+        logger = getattr(websocket.app.state, "logger", None)
+        tick_count = 0
+
+        try:
+            while True:
+                commander.step(DT)
+                state = commander.get_state()
+                await websocket.send_json(state.model_dump())
+
+                tick_count += 1
+                if logger and tick_count % LOG_INTERVAL == 0:
+                    logger.log_state(state)
+
+                await asyncio.sleep(DT)
+        except WebSocketDisconnect:
+            pass
+
+    return router
+===== ./src/api/routes.py =====
+"""
+REST endpoints for LocalFleet.
+POST /api/command       — send NL command
+GET  /api/assets        — current fleet state
+GET  /api/mission       — active mission info
+POST /api/gps-mode      — toggle GPS degradation
+POST /api/voice-command — send audio, get transcription + command
+GET  /api/logs          — retrieve mission log events
+GET  /api/logs/summary  — mission log summary
+"""
+import os
+import tempfile
+from typing import Optional
+
+from fastapi import APIRouter, Query, Request, UploadFile, File
+
+from src.schemas import (
+    CommandRequest, CommandResponse, FleetState, GpsDeniedRequest,
+)
+from src.voice.whisper_local import transcribe_audio
+
+
+def create_router() -> APIRouter:
+    router = APIRouter()
+
+    @router.post("/command", response_model=CommandResponse)
+    async def post_command(req: CommandRequest, request: Request):
+        """Parse NL text and dispatch to fleet."""
+        commander = request.app.state.commander
+        return commander.handle_command(req)
+
+    @router.get("/assets", response_model=FleetState)
+    async def get_assets(request: Request):
+        """Return current state of all assets."""
+        commander = request.app.state.commander
+        return commander.get_state()
+
+    @router.get("/mission")
+    async def get_mission(request: Request):
+        """Return active mission info."""
+        commander = request.app.state.commander
+        cmd = commander.last_command
+        return {
+            "active_mission": commander.fleet_manager.active_mission,
+            "formation": commander.fleet_manager.formation,
+            "last_command": cmd.model_dump() if cmd else None,
+        }
+
+    @router.post("/gps-mode")
+    async def post_gps_mode(req: GpsDeniedRequest, request: Request):
+        """Toggle GPS degradation."""
+        commander = request.app.state.commander
+        commander.handle_gps_mode(req)
+        return {
+            "gps_mode": req.mode.value,
+            "noise_meters": req.noise_meters,
+        }
+
+    @router.post("/return-to-base")
+    async def post_return_to_base(request: Request):
+        """Trigger comms-lost return-to-base for all assets."""
+        commander = request.app.state.commander
+        commander.return_to_base()
+        return {"success": True, "action": "return_to_base"}
+
+    @router.post("/voice-command", response_model=CommandResponse)
+    async def post_voice_command(request: Request, audio: UploadFile = File(...)):
+        """Transcribe uploaded audio and dispatch as fleet command."""
+        tmp_path = None
+        try:
+            suffix = os.path.splitext(audio.filename or ".wav")[1] or ".wav"
+            with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+                tmp.write(await audio.read())
+                tmp_path = tmp.name
+
+            # Frontend sends 16kHz mono WAV — pass directly to Whisper
+            text = transcribe_audio(tmp_path)
+            commander = request.app.state.commander
+            req = CommandRequest(text=text, source="voice")
+            return commander.handle_command(req)
+        except Exception as e:
+            return CommandResponse(success=False, error=str(e))
+        finally:
+            if tmp_path and os.path.exists(tmp_path):
+                os.unlink(tmp_path)
+
+    @router.get("/logs")
+    async def get_logs(
+        request: Request,
+        event_type: Optional[str] = Query(None),
+        asset_id: Optional[str] = Query(None),
+        limit: int = Query(200),
+    ):
+        """Retrieve logged mission events with optional filters."""
+        logger = getattr(request.app.state, "logger", None)
+        if logger is None:
+            return {"events": [], "count": 0}
+        events = logger.get_events(
+            event_type=event_type, asset_id=asset_id, limit=limit,
+        )
+        return {
+            "events": [e.model_dump(mode="json") for e in events],
+            "count": len(events),
+        }
+
+    @router.get("/logs/summary")
+    async def get_logs_summary(request: Request):
+        """Return a summary of logged mission events."""
+        logger = getattr(request.app.state, "logger", None)
+        if logger is None:
+            return {"total_events": 0, "commands": 0, "state_snapshots": 0, "gps_changes": 0, "duration_seconds": 0}
+        return {
+            "total_events": logger.count_events(),
+            "commands": logger.count_events("command"),
+            "state_snapshots": logger.count_events("state"),
+            "gps_changes": logger.count_events("gps_change"),
+        }
+
+    return router
+===== ./src/fleet/task_allocator.py =====
+"""
+TaskAllocator — Cross-domain mission assignment.
+Maps mission types to asset roles by domain (surface vs air).
+Decides which assets do what based on mission + available fleet.
+"""
+from typing import Dict, List
+
+from src.schemas import (
+    MissionType, DomainType, DronePattern, FormationType,
+)
+
+
+# What each mission type means for each domain
+MISSION_ROLES: Dict[MissionType, dict] = {
+    MissionType.PATROL: {
+        "surface_behavior": "waypoint",
+        "surface_formation": FormationType.ECHELON,
+        "air_pattern": DronePattern.ORBIT,
+        "air_altitude": 120.0,
+        "description": "Surface vessels patrol waypoints in formation, drone orbits overhead",
+    },
+    MissionType.SEARCH: {
+        "surface_behavior": "waypoint",
+        "surface_formation": FormationType.LINE_ABREAST,
+        "air_pattern": DronePattern.SWEEP,
+        "air_altitude": 80.0,
+        "description": "Surface vessels sweep in line, drone sweeps from altitude",
+    },
+    MissionType.ESCORT: {
+        "surface_behavior": "waypoint",
+        "surface_formation": FormationType.COLUMN,
+        "air_pattern": DronePattern.ORBIT,
+        "air_altitude": 150.0,
+        "description": "Surface vessels escort in column, drone orbits the convoy",
+    },
+    MissionType.LOITER: {
+        "surface_behavior": "loiter",
+        "surface_formation": FormationType.SPREAD,
+        "air_pattern": DronePattern.STATION,
+        "air_altitude": 100.0,
+        "description": "Surface vessels hold spread positions, drone holds station",
+    },
+    MissionType.AERIAL_RECON: {
+        "surface_behavior": "waypoint",
+        "surface_formation": FormationType.INDEPENDENT,
+        "air_pattern": DronePattern.SWEEP,
+        "air_altitude": 100.0,
+        "description": "Drone-primary mission: sweep area, surface vessels standby",
+    },
+}
+
+
+def get_mission_roles(mission_type: MissionType) -> dict:
+    """Return role config for a given mission type."""
+    return MISSION_ROLES.get(mission_type, MISSION_ROLES[MissionType.PATROL])
+
+
+def allocate_assets(
+    mission_type: MissionType,
+    available_assets: List[dict],
+) -> Dict[str, dict]:
+    """Assign roles to each asset based on mission type and domain.
+
+    available_assets: list of {"asset_id": str, "domain": DomainType}
+    Returns: dict of asset_id -> {"behavior": str, "formation": FormationType,
+                                   "drone_pattern": DronePattern | None,
+                                   "altitude": float | None}
+    """
+    roles = get_mission_roles(mission_type)
+    assignments: Dict[str, dict] = {}
+
+    for asset in available_assets:
+        aid = asset["asset_id"]
+        domain = asset["domain"]
+
+        if domain == DomainType.SURFACE:
+            assignments[aid] = {
+                "behavior": roles["surface_behavior"],
+                "formation": roles["surface_formation"],
+                "drone_pattern": None,
+                "altitude": None,
+            }
+        elif domain == DomainType.AIR:
+            assignments[aid] = {
+                "behavior": roles["air_pattern"].value,
+                "formation": FormationType.INDEPENDENT,
+                "drone_pattern": roles["air_pattern"],
+                "altitude": roles["air_altitude"],
+            }
+
+    return assignments
+===== ./src/fleet/__init__.py =====
+===== ./src/fleet/formations.py =====
+"""
+Formations — Surface vessel formation geometry.
+Given a reference point, heading, formation type, and spacing,
+computes offset positions for each vessel in the group.
+Surface-only. Drone uses DroneCoordinator patterns instead.
+"""
+import math
+from typing import Dict, List
+
+from src.schemas import Waypoint, FormationType
+
+
+def compute_formation_offsets(
+    vessel_ids: List[str],
+    formation: FormationType,
+    spacing: float = 200.0,
+) -> Dict[str, Waypoint]:
+    """Return offsets (meters) relative to the leader for each vessel.
+
+    The leader (vessel_ids[0]) always gets offset (0, 0).
+    Offsets are in body-frame: x = right of heading, y = behind heading.
+    Caller rotates by heading before adding to leader's world position.
+    """
+    offsets: Dict[str, Waypoint] = {}
+    n = len(vessel_ids)
+
+    for i, vid in enumerate(vessel_ids):
+        if i == 0:
+            offsets[vid] = Waypoint(x=0.0, y=0.0)
+            continue
+
+        if formation == FormationType.ECHELON:
+            # Diagonal: each vessel offset right and behind
+            offsets[vid] = Waypoint(x=i * spacing, y=-i * spacing)
+
+        elif formation == FormationType.LINE_ABREAST:
+            # Side by side, centered on leader
+            offsets[vid] = Waypoint(x=i * spacing, y=0.0)
+
+        elif formation == FormationType.COLUMN:
+            # Single file behind leader
+            offsets[vid] = Waypoint(x=0.0, y=-i * spacing)
+
+        elif formation == FormationType.SPREAD:
+            # Like line abreast but wider (1.5x spacing)
+            offsets[vid] = Waypoint(x=i * spacing * 1.5, y=0.0)
+
+        else:  # INDEPENDENT
+            offsets[vid] = Waypoint(x=0.0, y=0.0)
+
+    return offsets
+
+
+def apply_formation(
+    leader_x: float,
+    leader_y: float,
+    heading_deg: float,
+    vessel_ids: List[str],
+    formation: FormationType,
+    spacing: float = 200.0,
+) -> Dict[str, Waypoint]:
+    """Compute world-frame positions for each vessel in formation.
+
+    heading_deg: leader heading in degrees (0 = North).
+    Returns dict of asset_id -> Waypoint in world coordinates.
+    """
+    offsets = compute_formation_offsets(vessel_ids, formation, spacing)
+    heading_rad = math.radians(heading_deg)
+
+    # Rotation: body-frame (right, behind) -> world-frame (x, y)
+    cos_h = math.cos(heading_rad)
+    sin_h = math.sin(heading_rad)
+
+    positions: Dict[str, Waypoint] = {}
+    for vid, off in offsets.items():
+        # body x = starboard (right), body y = forward/aft
+        wx = leader_x + off.x * cos_h + off.y * sin_h
+        wy = leader_y - off.x * sin_h + off.y * cos_h
+        positions[vid] = Waypoint(x=wx, y=wy)
+
+    return positions
+===== ./src/fleet/drone_coordinator.py =====
+"""
+DroneCoordinator — Higher-level pattern generation for DroneAgent.
+Generates waypoints/parameters that feed into DroneAgent for
+orbit, sweep, track, and station patterns.
+"""
+import math
+from typing import List
+
+from src.schemas import Waypoint, DronePattern
+from src.dynamics.drone_dynamics import DroneAgent
+
+
+class DroneCoordinator:
+    def __init__(self, drone: DroneAgent):
+        self.drone = drone
+        self.orbit_radius = 150.0
+        self.sweep_spacing = 100.0
+        self.track_offset = 50.0
+        self._current_pattern: DronePattern | None = None
+        self._pattern_center: Waypoint | None = None
+
+    def generate_orbit_waypoints(self, center: Waypoint,
+                                  radius: float = 150.0) -> List[Waypoint]:
+        """Generate N points around a circle. First waypoint IS the center
+        (DroneAgent._step_orbit uses waypoints[0] as orbit center)."""
+        self.orbit_radius = radius
+        waypoints = [center]  # waypoints[0] = orbit center for DroneAgent
+        n_points = 8
+        for i in range(n_points):
+            angle = 2 * math.pi * i / n_points
+            waypoints.append(Waypoint(
+                x=center.x + radius * math.cos(angle),
+                y=center.y + radius * math.sin(angle),
+            ))
+        return waypoints
+
+    def generate_sweep_waypoints(self, corner1: Waypoint, corner2: Waypoint,
+                                  spacing: float = 100.0) -> List[Waypoint]:
+        """Generate lawnmower/raster zigzag over a rectangular area."""
+        self.sweep_spacing = spacing
+        min_x, max_x = min(corner1.x, corner2.x), max(corner1.x, corner2.x)
+        min_y, max_y = min(corner1.y, corner2.y), max(corner1.y, corner2.y)
+
+        waypoints: List[Waypoint] = []
+        x = min_x
+        going_up = True
+        while x <= max_x:
+            if going_up:
+                waypoints.append(Waypoint(x=x, y=min_y))
+                waypoints.append(Waypoint(x=x, y=max_y))
+            else:
+                waypoints.append(Waypoint(x=x, y=max_y))
+                waypoints.append(Waypoint(x=x, y=min_y))
+            going_up = not going_up
+            x += spacing
+
+        return waypoints
+
+    def generate_track_waypoints(self, target_position: Waypoint,
+                                  offset_distance: float = 50.0) -> List[Waypoint]:
+        """Generate a single waypoint offset behind/above the target."""
+        self.track_offset = offset_distance
+        return [Waypoint(
+            x=target_position.x - offset_distance,
+            y=target_position.y - offset_distance,
+        )]
+
+    def assign_pattern(self, pattern: DronePattern,
+                       waypoints: List[Waypoint],
+                       altitude: float = 100.0, **kwargs):
+        """Generate pattern-specific waypoints and push them to the drone."""
+        self._current_pattern = pattern
+        self.drone.target_altitude = altitude
+
+        if pattern == DronePattern.ORBIT:
+            center = waypoints[0]
+            radius = kwargs.get("radius", self.orbit_radius)
+            orbit_wps = self.generate_orbit_waypoints(center, radius)
+            self._pattern_center = center
+            self.drone.set_waypoints(orbit_wps, DronePattern.ORBIT)
+
+        elif pattern == DronePattern.SWEEP:
+            corner1, corner2 = waypoints[0], waypoints[1]
+            spacing = kwargs.get("spacing", self.sweep_spacing)
+            sweep_wps = self.generate_sweep_waypoints(corner1, corner2, spacing)
+            self._pattern_center = Waypoint(
+                x=(corner1.x + corner2.x) / 2,
+                y=(corner1.y + corner2.y) / 2,
+            )
+            self.drone.set_waypoints(sweep_wps, DronePattern.SWEEP)
+
+        elif pattern == DronePattern.TRACK:
+            target = waypoints[0]
+            offset = kwargs.get("offset_distance", self.track_offset)
+            track_wps = self.generate_track_waypoints(target, offset)
+            self._pattern_center = target
+            self.drone.set_waypoints(track_wps, DronePattern.TRACK)
+
+        elif pattern == DronePattern.STATION:
+            self._pattern_center = waypoints[0]
+            self.drone.set_waypoints([waypoints[0]], None)
+
+    def get_pattern_info(self) -> dict:
+        """Return current pattern state for dashboard display."""
+        return {
+            "pattern": self._current_pattern.value if self._current_pattern else None,
+            "center": {"x": self._pattern_center.x, "y": self._pattern_center.y}
+                      if self._pattern_center else None,
+            "altitude": self.drone.target_altitude,
+            "orbit_radius": self.orbit_radius,
+            "sweep_spacing": self.sweep_spacing,
+            "track_offset": self.track_offset,
+        }
+===== ./src/fleet/fleet_commander.py =====
+"""
+FleetCommander — Bridges natural language to FleetManager.
+Takes text input, calls the local LLM to produce a FleetCommand,
+dispatches it to the FleetManager, and returns a CommandResponse.
+"""
+import time
+from typing import TYPE_CHECKING
+
+from src.schemas import (
+    FleetCommand, CommandRequest, CommandResponse, GpsMode, GpsDeniedRequest,
+)
+from src.llm.ollama_client import parse_fleet_command
+from src.fleet.fleet_manager import FleetManager
+
+if TYPE_CHECKING:
+    from src.logging.mission_logger import MissionLogger
+
+
+class FleetCommander:
+    def __init__(
+        self,
+        fleet_manager: FleetManager | None = None,
+        logger: "MissionLogger | None" = None,
+    ):
+        self.fleet_manager = fleet_manager or FleetManager()
+        self.last_command: FleetCommand | None = None
+        self.logger = logger
+
+    def handle_command(self, request: CommandRequest) -> CommandResponse:
+        """Parse NL text into FleetCommand and dispatch to fleet manager."""
+        t0 = time.time()
+        try:
+            command = parse_fleet_command(request.text)
+            elapsed_ms = (time.time() - t0) * 1000.0
+
+            self.fleet_manager.dispatch_command(command)
+            self.last_command = command
+
+            if self.logger:
+                self.logger.log_command(command)
+
+            return CommandResponse(
+                success=True,
+                fleet_command=command,
+                llm_response_time_ms=elapsed_ms,
+            )
+        except Exception as e:
+            elapsed_ms = (time.time() - t0) * 1000.0
+            return CommandResponse(
+                success=False,
+                error=str(e),
+                llm_response_time_ms=elapsed_ms,
+            )
+
+    def handle_text(self, text: str) -> CommandResponse:
+        """Convenience: accept raw string instead of CommandRequest."""
+        return self.handle_command(CommandRequest(text=text))
+
+    def handle_gps_mode(self, request: GpsDeniedRequest):
+        """Toggle GPS degradation on the fleet manager."""
+        self.fleet_manager.set_gps_mode(request.mode, request.noise_meters)
+        if self.logger:
+            self.logger.log_gps_change(request.mode, request.noise_meters)
+
+    def return_to_base(self):
+        """Trigger comms_lost_behavior: return all assets to base."""
+        self.fleet_manager.return_to_base()
+
+    def step(self, dt: float = 0.25):
+        """Advance the simulation one tick."""
+        self.fleet_manager.step(dt)
+
+    def get_state(self):
+        """Get current fleet state."""
+        return self.fleet_manager.get_fleet_state()
+===== ./src/fleet/fleet_manager.py =====
+"""
+FleetManager — Central coordinator for multi-domain fleet simulation.
+Owns all assets, steps the simulation, bridges commands to the right
+physics engine by domain (CORALL for surface, DroneAgent for air).
+"""
+import math
+import time
+import numpy as np
+from typing import Dict, List
+
+from src.schemas import (
+    FleetCommand, FleetState, AssetState, AssetCommand,
+    DomainType, AssetStatus, GpsMode, MissionType, Waypoint, FormationType,
+    DronePattern,
+)
+from src.dynamics.vessel_dynamics import vessel_dynamics
+from src.dynamics.controller import controller
+from src.dynamics.actuator_modeling import actuator_modeling
+from src.dynamics.drone_dynamics import DroneAgent
+from src.core.integration import integration
+from src.navigation.planning import waypoint_selection, planning
+from src.utils.gps_denied import degrade_position
+from src.fleet.drone_coordinator import DroneCoordinator
+from src.fleet.formations import apply_formation
+
+METERS_TO_NMI = 1.0 / 1852.0
+SAT_AMP = 20  # actuator saturation amplitude
+
+
+class FleetManager:
+    def __init__(self):
+        # Surface vessels: state = [x, y, psi, r, b, u]
+        self.vessels: Dict[str, dict] = {}
+        vessel_configs = [
+            ("alpha",   0.0,   0.0),
+            ("bravo",   200.0, 0.0),
+            ("charlie", 400.0, 0.0),
+        ]
+        for vid, x0, y0 in vessel_configs:
+            self.vessels[vid] = {
+                "state": np.array([x0, y0, 0.0, 0.0, 0.0, 0.0]),
+                "ui_psi1": 0.0,
+                "waypoints_x": [x0 * METERS_TO_NMI],  # nmi — start position
+                "waypoints_y": [y0 * METERS_TO_NMI],
+                "i_wpt": 0,
+                "desired_speed": 0.0,
+                "status": AssetStatus.IDLE,
+            }
+
+        # Drone
+        self.drone = DroneAgent("eagle-1", x=200.0, y=-100.0, altitude=100.0)
+        self.drone_coordinator = DroneCoordinator(self.drone)
+
+        # Home positions for return-to-base
+        self.home_positions: Dict[str, Waypoint] = {
+            vid: Waypoint(x=x0, y=y0) for vid, x0, y0 in vessel_configs
+        }
+        self.home_positions["eagle-1"] = Waypoint(x=200.0, y=-100.0)
+
+        # GPS mode
+        self.gps_mode = GpsMode.FULL
+        self.noise_meters = 25.0
+
+        # Mission tracking
+        self.active_mission: MissionType | None = None
+        self.formation = FormationType.INDEPENDENT
+        self.comms_lost_behavior: str = "return_to_base"
+
+    # ------------------------------------------------------------------
+    # Command dispatch
+    # ------------------------------------------------------------------
+    def dispatch_command(self, cmd: FleetCommand):
+        self.active_mission = cmd.mission_type
+        self.formation = cmd.formation
+        self.comms_lost_behavior = cmd.comms_lost_behavior
+
+        # --- Apply formation offsets for surface vessels ---
+        surface_cmds = [ac for ac in cmd.assets
+                        if ac.domain == DomainType.SURFACE and ac.asset_id in self.vessels]
+        formation_positions: Dict[str, Waypoint] | None = None
+        if (cmd.formation != FormationType.INDEPENDENT
+                and len(surface_cmds) >= 2
+                and surface_cmds[0].waypoints):
+            # Use leader's first waypoint as formation reference
+            leader = surface_cmds[0]
+            leader_wp = leader.waypoints[-1]  # final destination
+            leader_v = self.vessels[leader.asset_id]
+            leader_heading = (90 - math.degrees(leader_v["state"][2])) % 360
+            vessel_ids = [ac.asset_id for ac in surface_cmds]
+            formation_positions = apply_formation(
+                leader_wp.x, leader_wp.y, leader_heading,
+                vessel_ids, cmd.formation, cmd.spacing_meters,
+            )
+
+        for ac in cmd.assets:
+            if ac.domain == DomainType.SURFACE and ac.asset_id in self.vessels:
+                v = self.vessels[ac.asset_id]
+                cur = v["state"]
+
+                # Use formation-adjusted waypoints if available
+                if formation_positions and ac.asset_id in formation_positions:
+                    fp = formation_positions[ac.asset_id]
+                    # Replace final waypoint with formation position
+                    adjusted_wps = list(ac.waypoints[:-1]) + [Waypoint(x=fp.x, y=fp.y)] if ac.waypoints else []
+                else:
+                    adjusted_wps = list(ac.waypoints)
+
+                # Build waypoint lists in nmi; prepend current position as wp 0
+                wpts_x = [cur[0] * METERS_TO_NMI]
+                wpts_y = [cur[1] * METERS_TO_NMI]
+                for wp in adjusted_wps:
+                    wpts_x.append(wp.x * METERS_TO_NMI)
+                    wpts_y.append(wp.y * METERS_TO_NMI)
+                v["waypoints_x"] = wpts_x
+                v["waypoints_y"] = wpts_y
+                v["i_wpt"] = 1 if len(adjusted_wps) > 0 else 0
+                v["desired_speed"] = ac.speed
+                v["status"] = AssetStatus.EXECUTING if adjusted_wps else AssetStatus.IDLE
+
+            elif ac.domain == DomainType.AIR and ac.asset_id == self.drone.asset_id:
+                # Use DroneCoordinator for pattern-based commands when
+                # enough waypoints are provided for the pattern type
+                use_coordinator = (
+                    ac.drone_pattern is not None
+                    and ac.waypoints
+                    and (ac.drone_pattern != DronePattern.SWEEP or len(ac.waypoints) >= 2)
+                )
+                if use_coordinator:
+                    self.drone_coordinator.assign_pattern(
+                        ac.drone_pattern, ac.waypoints,
+                        altitude=ac.altitude or 100.0,
+                    )
+                else:
+                    self.drone.set_waypoints(ac.waypoints, ac.drone_pattern)
+                    if ac.altitude is not None:
+                        self.drone.target_altitude = ac.altitude
+
+    # ------------------------------------------------------------------
+    # Simulation step
+    # ------------------------------------------------------------------
+    def step(self, dt: float):
+        # Surface vessels
+        for vid, v in self.vessels.items():
+            state = v["state"]
+            x_nmi = state[0] * METERS_TO_NMI
+            y_nmi = state[1] * METERS_TO_NMI
+
+            wpts_x = v["waypoints_x"]
+            wpts_y = v["waypoints_y"]
+            i_wpt = v["i_wpt"]
+
+            if v["status"] in (AssetStatus.EXECUTING, AssetStatus.RETURNING) and i_wpt > 0:
+                i_wpt = waypoint_selection(wpts_x, wpts_y, x_nmi, y_nmi, i_wpt)
+                v["i_wpt"] = i_wpt
+
+                # Check if we've passed the last waypoint
+                if i_wpt >= len(wpts_x):
+                    v["status"] = AssetStatus.IDLE
+                    v["i_wpt"] = len(wpts_x) - 1
+                    i_wpt = v["i_wpt"]
+
+                psi_desired = planning(wpts_x, wpts_y, x_nmi, y_nmi, i_wpt)
+                if psi_desired is None:
+                    psi_desired = state[2]
+
+                tau_c, v_c, ui_psi1 = controller(
+                    psi_desired, state[2], state[3],
+                    v["desired_speed"], state[4], v["ui_psi1"], dt,
+                )
+                v["ui_psi1"] = ui_psi1
+                tau_ac = actuator_modeling(tau_c, SAT_AMP)
+                inputs = [tau_ac, v_c]
+            else:
+                # Idle — no thrust, let vessel drift/stop
+                inputs = [0.0, 0.0]
+
+            x_dot = vessel_dynamics(state, inputs)
+            v["state"] = integration(state, x_dot, dt)
+
+        # Drone
+        self.drone.step(dt)
+
+    # ------------------------------------------------------------------
+    # State query
+    # ------------------------------------------------------------------
+    def get_fleet_state(self) -> FleetState:
+        assets: List[AssetState] = []
+
+        for vid, v in self.vessels.items():
+            s = v["state"]
+            x, y = float(s[0]), float(s[1])
+            accuracy = 1.0
+
+            if self.gps_mode == GpsMode.DEGRADED:
+                x, y, accuracy = degrade_position(x, y, self.noise_meters)
+
+            assets.append(AssetState(
+                asset_id=vid,
+                domain=DomainType.SURFACE,
+                x=x,
+                y=y,
+                heading=(90 - math.degrees(s[2])) % 360,
+                speed=float(s[5]),
+                status=v["status"],
+                current_waypoint_index=v["i_wpt"],
+                total_waypoints=len(v["waypoints_x"]) - 1,  # exclude start wp
+                gps_mode=self.gps_mode,
+                position_accuracy=accuracy,
+            ))
+
+        drone_state = self.drone.get_state()
+        if self.gps_mode == GpsMode.DEGRADED:
+            nx, ny, acc = degrade_position(drone_state.x, drone_state.y, self.noise_meters)
+            drone_state = drone_state.model_copy(update={
+                "x": nx, "y": ny,
+                "gps_mode": self.gps_mode,
+                "position_accuracy": acc,
+            })
+        assets.append(drone_state)
+
+        return FleetState(
+            timestamp=time.time(),
+            assets=assets,
+            active_mission=self.active_mission,
+            formation=self.formation,
+            gps_mode=self.gps_mode,
+        )
+
+    # ------------------------------------------------------------------
+    # Return to base
+    # ------------------------------------------------------------------
+    def return_to_base(self):
+        """Send all assets back to their starting positions."""
+        for vid, v in self.vessels.items():
+            home = self.home_positions[vid]
+            cur = v["state"]
+            dist = math.sqrt((cur[0] - home.x) ** 2 + (cur[1] - home.y) ** 2)
+            if dist < 5.0:
+                # Already at home — go idle immediately
+                v["status"] = AssetStatus.IDLE
+                v["desired_speed"] = 0.0
+            else:
+                wpts_x = [cur[0] * METERS_TO_NMI, home.x * METERS_TO_NMI]
+                wpts_y = [cur[1] * METERS_TO_NMI, home.y * METERS_TO_NMI]
+                v["waypoints_x"] = wpts_x
+                v["waypoints_y"] = wpts_y
+                v["i_wpt"] = 1
+                v["desired_speed"] = 5.0
+                v["status"] = AssetStatus.RETURNING
+
+        home_drone = self.home_positions[self.drone.asset_id]
+        drone_dist = math.sqrt(
+            (self.drone.x - home_drone.x) ** 2 +
+            (self.drone.y - home_drone.y) ** 2
+        )
+        if drone_dist < 5.0:
+            self.drone.status = AssetStatus.IDLE
+            self.drone.waypoints = []
+        else:
+            self.drone.set_waypoints([home_drone], None)
+            self.drone.status = AssetStatus.RETURNING
+
+        self.active_mission = None
+        self.formation = FormationType.INDEPENDENT
+
+    # ------------------------------------------------------------------
+    # GPS mode control
+    # ------------------------------------------------------------------
+    def set_gps_mode(self, mode: GpsMode, noise_meters: float = 25.0):
+        self.gps_mode = mode
+        self.noise_meters = noise_meters
+===== ./src/logging/__init__.py =====
+===== ./src/logging/replay.py =====
+"""
+MissionReplay — Replay missions from SQLite logs.
+Reads logged MissionEvent records and yields them in sequence
+for playback or post-mission analysis.
+"""
+from typing import Generator, List, Optional
+
+from src.schemas import FleetState, MissionEvent
+from src.logging.mission_logger import MissionLogger
+
+
+class MissionReplay:
+    """Reads back logged events for replay and analysis."""
+
+    def __init__(self, db_path: str):
+        self._logger = MissionLogger(db_path=db_path)
+
+    # ------------------------------------------------------------------
+    # Full replay
+    # ------------------------------------------------------------------
+    def get_all_events(self, limit: int = 10000) -> List[MissionEvent]:
+        """Return all logged events in chronological order."""
+        return self._logger.get_events(limit=limit)
+
+    def iter_states(self) -> Generator[FleetState, None, None]:
+        """Yield FleetState snapshots in chronological order for playback."""
+        events = self._logger.get_events(event_type="state", limit=100000)
+        for event in events:
+            yield FleetState(**event.data)
+
+    # ------------------------------------------------------------------
+    # Filtered queries
+    # ------------------------------------------------------------------
+    def get_commands(self) -> List[MissionEvent]:
+        """Return all command events."""
+        return self._logger.get_events(event_type="command")
+
+    def get_asset_events(self, asset_id: str) -> List[MissionEvent]:
+        """Return all events for a specific asset."""
+        return self._logger.get_events(asset_id=asset_id)
+
+    def get_events_in_range(
+        self,
+        start_time: float,
+        end_time: float,
+        event_type: Optional[str] = None,
+    ) -> List[MissionEvent]:
+        """Return events within a time window."""
+        return self._logger.get_events(
+            event_type=event_type,
+            start_time=start_time,
+            end_time=end_time,
+        )
+
+    def get_gps_changes(self) -> List[MissionEvent]:
+        """Return all GPS mode change events."""
+        return self._logger.get_events(event_type="gps_change")
+
+    # ------------------------------------------------------------------
+    # Summary
+    # ------------------------------------------------------------------
+    def summary(self) -> dict:
+        """Return a summary of the logged mission."""
+        total = self._logger.count_events()
+        commands = self._logger.count_events("command")
+        states = self._logger.count_events("state")
+        gps_changes = self._logger.count_events("gps_change")
+
+        all_events = self._logger.get_events(limit=1)
+        first_ts = all_events[0].timestamp if all_events else None
+
+        last_events = self._logger.get_events(limit=100000)
+        last_ts = last_events[-1].timestamp if last_events else None
+
+        duration = (last_ts - first_ts) if (first_ts and last_ts) else 0.0
+
+        return {
+            "total_events": total,
+            "commands": commands,
+            "state_snapshots": states,
+            "gps_changes": gps_changes,
+            "duration_seconds": round(duration, 2),
+        }
+
+    def close(self):
+        self._logger.close()
+===== ./src/logging/mission_logger.py =====
+"""
+MissionLogger — SQLite-backed event logging for LocalFleet.
+Logs MissionEvent records (commands, state snapshots, GPS changes, etc.)
+to a SQLite database in data/logs/.
+"""
+import json
+import os
+import sqlite3
+import time
+from datetime import datetime
+from typing import List, Optional
+
+from src.schemas import (
+    DomainType,
+    FleetCommand,
+    FleetState,
+    GpsMode,
+    MissionEvent,
+)
+
+DEFAULT_DB_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "data", "logs")
+
+
+class MissionLogger:
+    """Logs MissionEvent records to a SQLite database."""
+
+    def __init__(self, db_path: Optional[str] = None):
+        if db_path is None:
+            os.makedirs(DEFAULT_DB_DIR, exist_ok=True)
+            db_path = os.path.join(DEFAULT_DB_DIR, "mission_log.db")
+        self.db_path = db_path
+        self._conn = sqlite3.connect(db_path, check_same_thread=False)
+        self._conn.row_factory = sqlite3.Row
+        self._create_table()
+
+    def _create_table(self):
+        self._conn.execute("""
+            CREATE TABLE IF NOT EXISTS events (
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp  REAL    NOT NULL,
+                event_type TEXT    NOT NULL,
+                asset_id   TEXT,
+                domain     TEXT,
+                data       TEXT    NOT NULL,
+                created_at TEXT    NOT NULL
+            )
+        """)
+        self._conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_events_type ON events(event_type)
+        """)
+        self._conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_events_ts ON events(timestamp)
+        """)
+        self._conn.commit()
+
+    # ------------------------------------------------------------------
+    # Core insert
+    # ------------------------------------------------------------------
+    def log_event(self, event: MissionEvent):
+        """Insert a single MissionEvent into the database."""
+        self._conn.execute(
+            "INSERT INTO events (timestamp, event_type, asset_id, domain, data, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (
+                event.timestamp,
+                event.event_type,
+                event.asset_id,
+                event.domain.value if event.domain else None,
+                json.dumps(event.data),
+                event.created_at.isoformat(),
+            ),
+        )
+        self._conn.commit()
+
+    # ------------------------------------------------------------------
+    # Convenience loggers
+    # ------------------------------------------------------------------
+    def log_command(self, command: FleetCommand):
+        """Log a fleet command event."""
+        self.log_event(MissionEvent(
+            timestamp=time.time(),
+            event_type="command",
+            data=command.model_dump(mode="json"),
+        ))
+
+    def log_state(self, state: FleetState):
+        """Log a fleet state snapshot."""
+        self.log_event(MissionEvent(
+            timestamp=state.timestamp,
+            event_type="state",
+            data=state.model_dump(mode="json"),
+        ))
+
+    def log_gps_change(self, mode: GpsMode, noise_meters: float = 25.0):
+        """Log a GPS mode change."""
+        self.log_event(MissionEvent(
+            timestamp=time.time(),
+            event_type="gps_change",
+            data={"mode": mode.value, "noise_meters": noise_meters},
+        ))
+
+    # ------------------------------------------------------------------
+    # Query
+    # ------------------------------------------------------------------
+    def get_events(
+        self,
+        event_type: Optional[str] = None,
+        asset_id: Optional[str] = None,
+        start_time: Optional[float] = None,
+        end_time: Optional[float] = None,
+        limit: int = 1000,
+    ) -> List[MissionEvent]:
+        """Query logged events with optional filters."""
+        clauses: List[str] = []
+        params: list = []
+
+        if event_type is not None:
+            clauses.append("event_type = ?")
+            params.append(event_type)
+        if asset_id is not None:
+            clauses.append("asset_id = ?")
+            params.append(asset_id)
+        if start_time is not None:
+            clauses.append("timestamp >= ?")
+            params.append(start_time)
+        if end_time is not None:
+            clauses.append("timestamp <= ?")
+            params.append(end_time)
+
+        where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
+        sql = f"SELECT * FROM events{where} ORDER BY timestamp ASC LIMIT ?"
+        params.append(limit)
+
+        rows = self._conn.execute(sql, params).fetchall()
+        return [self._row_to_event(r) for r in rows]
+
+    def count_events(self, event_type: Optional[str] = None) -> int:
+        """Count events, optionally filtered by type."""
+        if event_type:
+            row = self._conn.execute(
+                "SELECT COUNT(*) FROM events WHERE event_type = ?", (event_type,)
+            ).fetchone()
+        else:
+            row = self._conn.execute("SELECT COUNT(*) FROM events").fetchone()
+        return row[0]
+
+    # ------------------------------------------------------------------
+    # Internals
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _row_to_event(row: sqlite3.Row) -> MissionEvent:
+        return MissionEvent(
+            timestamp=row["timestamp"],
+            event_type=row["event_type"],
+            asset_id=row["asset_id"],
+            domain=DomainType(row["domain"]) if row["domain"] else None,
+            data=json.loads(row["data"]),
+            created_at=datetime.fromisoformat(row["created_at"]),
+        )
+
+    def close(self):
+        self._conn.close()

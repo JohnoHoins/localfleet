@@ -1,0 +1,1651 @@
+===== ./tests/test_voice.py =====
+"""Tests for voice transcription module and /api/voice-command endpoint."""
+import io
+import pytest
+from unittest.mock import patch, MagicMock
+from fastapi.testclient import TestClient
+
+from src.schemas import (
+    FleetCommand, MissionType, DomainType, AssetCommand, Waypoint,
+)
+from src.fleet.fleet_commander import FleetCommander
+from src.api.server import create_app
+
+
+@pytest.fixture
+def commander():
+    return FleetCommander()
+
+
+@pytest.fixture
+def client(commander):
+    app = create_app(commander)
+    return TestClient(app)
+
+
+# ===== whisper_local.transcribe_audio =====
+
+class TestTranscribeAudio:
+    def test_returns_string(self):
+        """transcribe_audio returns a stripped string."""
+        mock_result = {"text": "  patrol the harbor  "}
+        with patch("src.voice.whisper_local.mlx_whisper") as mock_whisper:
+            mock_whisper.transcribe.return_value = mock_result
+            from src.voice.whisper_local import transcribe_audio
+            with patch("os.path.exists", return_value=True):
+                text = transcribe_audio("/tmp/test.wav")
+        assert isinstance(text, str)
+        assert text == "patrol the harbor"
+
+    def test_file_not_found(self):
+        from src.voice.whisper_local import transcribe_audio
+        with pytest.raises(FileNotFoundError):
+            transcribe_audio("/nonexistent/path.wav")
+
+    def test_transcription_failure(self):
+        with patch("src.voice.whisper_local.mlx_whisper") as mock_whisper:
+            mock_whisper.transcribe.side_effect = Exception("model error")
+            from src.voice.whisper_local import transcribe_audio
+            with patch("os.path.exists", return_value=True):
+                with pytest.raises(RuntimeError, match="Transcription failed"):
+                    transcribe_audio("/tmp/test.wav")
+
+
+# ===== POST /api/voice-command =====
+
+class TestVoiceCommandEndpoint:
+    def test_voice_command_success(self, client):
+        """Upload audio → transcribe → LLM parse → CommandResponse."""
+        fake_cmd = FleetCommand(
+            mission_type=MissionType.PATROL,
+            assets=[
+                AssetCommand(
+                    asset_id="alpha",
+                    domain=DomainType.SURFACE,
+                    waypoints=[Waypoint(x=100, y=200)],
+                    speed=5.0,
+                ),
+            ],
+        )
+        with patch("src.api.routes.transcribe_audio", return_value="patrol the harbor"), \
+             patch("src.fleet.fleet_commander.parse_fleet_command", return_value=fake_cmd):
+            resp = client.post(
+                "/api/voice-command",
+                files={"audio": ("test.wav", io.BytesIO(b"fake-audio-data"), "audio/wav")},
+            )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["success"] is True
+        assert data["fleet_command"]["mission_type"] == "patrol"
+
+    def test_voice_command_transcription_error(self, client):
+        """If transcription fails, return error response."""
+        with patch("src.api.routes.transcribe_audio", side_effect=RuntimeError("bad audio")):
+            resp = client.post(
+                "/api/voice-command",
+                files={"audio": ("test.wav", io.BytesIO(b"bad"), "audio/wav")},
+            )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["success"] is False
+        assert "bad audio" in data["error"]
+
+    def test_voice_command_no_file(self, client):
+        """Missing audio field returns 422."""
+        resp = client.post("/api/voice-command")
+        assert resp.status_code == 422
+===== ./tests/test_ollama_client.py =====
+"""Tests for Ollama LLM client — connection and multi-domain parsing."""
+from src.llm.ollama_client import test_connection, parse_fleet_command
+from src.schemas import DomainType
+
+
+def test_ollama_connection():
+    assert test_connection() is True
+    print("Connection OK")
+
+
+def test_parse_multi_domain():
+    cmd = parse_fleet_command(
+        "Send eagle-1 to do aerial recon at 120 meters with sweep pattern. "
+        "Alpha patrol the harbor."
+    )
+    asset_ids = [a.asset_id for a in cmd.assets]
+    domains = {a.asset_id: a.domain for a in cmd.assets}
+
+    assert len(cmd.assets) >= 2, f"Expected 2+ assets, got {len(cmd.assets)}"
+    assert "eagle-1" in asset_ids, "Missing eagle-1"
+    assert "alpha" in asset_ids, "Missing alpha"
+    assert domains["eagle-1"] == DomainType.AIR
+    assert domains["alpha"] == DomainType.SURFACE
+
+    eagle = [a for a in cmd.assets if a.asset_id == "eagle-1"][0]
+    assert eagle.altitude is not None, "Eagle missing altitude"
+    print(f"Multi-domain parse OK — {len(cmd.assets)} assets")
+
+
+if __name__ == "__main__":
+    test_ollama_connection()
+    test_parse_multi_domain()
+    print("\nAll ollama client tests passed!")
+===== ./tests/test_fleet_commander.py =====
+"""Tests for FleetCommander — NL → FleetManager bridge."""
+import pytest
+from unittest.mock import patch
+
+from src.fleet.fleet_commander import FleetCommander
+from src.fleet.fleet_manager import FleetManager
+from src.schemas import (
+    FleetCommand, AssetCommand, CommandRequest, CommandResponse,
+    GpsDeniedRequest, GpsMode, DomainType, MissionType, FormationType,
+    Waypoint, DronePattern, AssetStatus,
+)
+
+
+def _fake_command():
+    """A canned FleetCommand for mocked tests."""
+    return FleetCommand(
+        mission_type=MissionType.PATROL,
+        assets=[
+            AssetCommand(
+                asset_id="alpha",
+                domain=DomainType.SURFACE,
+                waypoints=[Waypoint(x=800.0, y=100.0)],
+                speed=5.0,
+            ),
+            AssetCommand(
+                asset_id="eagle-1",
+                domain=DomainType.AIR,
+                waypoints=[Waypoint(x=500.0, y=300.0)],
+                speed=15.0,
+                altitude=120.0,
+                drone_pattern=DronePattern.SWEEP,
+            ),
+        ],
+        formation=FormationType.ECHELON,
+        raw_text="patrol harbor with alpha, eagle sweep",
+    )
+
+
+@patch("src.fleet.fleet_commander.parse_fleet_command")
+def test_handle_command_success(mock_parse):
+    mock_parse.return_value = _fake_command()
+
+    fc = FleetCommander()
+    resp = fc.handle_command(CommandRequest(text="patrol harbor with alpha"))
+
+    assert resp.success is True
+    assert resp.fleet_command is not None
+    assert resp.fleet_command.mission_type == MissionType.PATROL
+    assert resp.llm_response_time_ms >= 0
+    assert fc.last_command is not None
+    mock_parse.assert_called_once_with("patrol harbor with alpha")
+
+
+@patch("src.fleet.fleet_commander.parse_fleet_command")
+def test_handle_command_dispatches_to_fleet(mock_parse):
+    mock_parse.return_value = _fake_command()
+
+    fm = FleetManager()
+    fc = FleetCommander(fleet_manager=fm)
+    fc.handle_command(CommandRequest(text="go"))
+
+    # alpha should have received waypoints
+    assert fm.vessels["alpha"]["status"] == AssetStatus.EXECUTING
+    assert fm.vessels["alpha"]["desired_speed"] == 5.0
+
+    # drone should have received waypoints
+    assert fm.drone.status == AssetStatus.EXECUTING
+    assert fm.drone.target_altitude == 120.0
+
+
+@patch("src.fleet.fleet_commander.parse_fleet_command")
+def test_handle_command_error(mock_parse):
+    mock_parse.side_effect = RuntimeError("Ollama not running")
+
+    fc = FleetCommander()
+    resp = fc.handle_text("patrol harbor")
+
+    assert resp.success is False
+    assert "Ollama not running" in resp.error
+    assert fc.last_command is None
+
+
+@patch("src.fleet.fleet_commander.parse_fleet_command")
+def test_step_advances_simulation(mock_parse):
+    mock_parse.return_value = _fake_command()
+
+    fc = FleetCommander()
+    fc.handle_text("go")
+
+    state_before = fc.get_state()
+    pos_before = {a.asset_id: (a.x, a.y) for a in state_before.assets}
+
+    for _ in range(10):
+        fc.step(dt=0.1)
+
+    state_after = fc.get_state()
+    pos_after = {a.asset_id: (a.x, a.y) for a in state_after.assets}
+
+    # alpha and eagle-1 should have moved
+    assert pos_after["alpha"] != pos_before["alpha"]
+    assert pos_after["eagle-1"] != pos_before["eagle-1"]
+
+
+def test_handle_gps_mode():
+    fc = FleetCommander()
+    fc.handle_gps_mode(GpsDeniedRequest(mode=GpsMode.DEGRADED, noise_meters=50.0))
+
+    assert fc.fleet_manager.gps_mode == GpsMode.DEGRADED
+    assert fc.fleet_manager.noise_meters == 50.0
+
+    state = fc.get_state()
+    assert state.gps_mode == GpsMode.DEGRADED
+
+
+@patch("src.fleet.fleet_commander.parse_fleet_command")
+def test_handle_text_convenience(mock_parse):
+    mock_parse.return_value = _fake_command()
+
+    fc = FleetCommander()
+    resp = fc.handle_text("patrol harbor")
+
+    assert resp.success is True
+    mock_parse.assert_called_once_with("patrol harbor")
+===== ./tests/test_mission_logger.py =====
+"""
+Tests for Step 12 — MissionLogger and MissionReplay.
+Uses a temporary SQLite database for each test.
+"""
+import os
+import tempfile
+import time
+
+import pytest
+
+from src.schemas import (
+    AssetCommand,
+    AssetState,
+    AssetStatus,
+    DomainType,
+    DronePattern,
+    FleetCommand,
+    FleetState,
+    FormationType,
+    GpsMode,
+    MissionEvent,
+    MissionType,
+    Waypoint,
+)
+from src.logging.mission_logger import MissionLogger
+from src.logging.replay import MissionReplay
+
+
+@pytest.fixture
+def tmp_db(tmp_path):
+    """Yield a temp db path and clean up after."""
+    db_path = str(tmp_path / "test_log.db")
+    yield db_path
+
+
+@pytest.fixture
+def logger(tmp_db):
+    lg = MissionLogger(db_path=tmp_db)
+    yield lg
+    lg.close()
+
+
+# ------------------------------------------------------------------
+# MissionLogger tests
+# ------------------------------------------------------------------
+
+def test_log_event_basic(logger):
+    """Log a raw MissionEvent and retrieve it."""
+    event = MissionEvent(
+        timestamp=time.time(),
+        event_type="command",
+        asset_id="alpha",
+        domain=DomainType.SURFACE,
+        data={"action": "patrol"},
+    )
+    logger.log_event(event)
+    events = logger.get_events()
+    assert len(events) == 1
+    assert events[0].event_type == "command"
+    assert events[0].asset_id == "alpha"
+    assert events[0].domain == DomainType.SURFACE
+    assert events[0].data["action"] == "patrol"
+
+
+def test_log_command(logger):
+    """Log a FleetCommand via convenience method."""
+    cmd = FleetCommand(
+        mission_type=MissionType.PATROL,
+        assets=[
+            AssetCommand(
+                asset_id="alpha",
+                domain=DomainType.SURFACE,
+                waypoints=[Waypoint(x=500, y=500)],
+                speed=5.0,
+            ),
+            AssetCommand(
+                asset_id="eagle-1",
+                domain=DomainType.AIR,
+                waypoints=[Waypoint(x=300, y=300)],
+                speed=15.0,
+                altitude=120.0,
+                drone_pattern=DronePattern.ORBIT,
+            ),
+        ],
+        formation=FormationType.ECHELON,
+        raw_text="patrol harbor with eagle overhead",
+    )
+    logger.log_command(cmd)
+
+    events = logger.get_events(event_type="command")
+    assert len(events) == 1
+    assert events[0].data["mission_type"] == "patrol"
+    assert len(events[0].data["assets"]) == 2
+
+
+def test_log_state(logger):
+    """Log a FleetState snapshot."""
+    state = FleetState(
+        timestamp=time.time(),
+        assets=[
+            AssetState(
+                asset_id="alpha",
+                domain=DomainType.SURFACE,
+                x=100.0, y=200.0,
+                heading=45.0, speed=5.0,
+                status=AssetStatus.EXECUTING,
+            ),
+        ],
+        active_mission=MissionType.PATROL,
+        formation=FormationType.ECHELON,
+    )
+    logger.log_state(state)
+
+    events = logger.get_events(event_type="state")
+    assert len(events) == 1
+    assert events[0].data["assets"][0]["asset_id"] == "alpha"
+
+
+def test_log_gps_change(logger):
+    """Log a GPS mode change."""
+    logger.log_gps_change(GpsMode.DEGRADED, noise_meters=30.0)
+
+    events = logger.get_events(event_type="gps_change")
+    assert len(events) == 1
+    assert events[0].data["mode"] == "degraded"
+    assert events[0].data["noise_meters"] == 30.0
+
+
+def test_filter_by_event_type(logger):
+    """Filter events by type."""
+    logger.log_gps_change(GpsMode.DEGRADED)
+    logger.log_event(MissionEvent(
+        timestamp=time.time(),
+        event_type="command",
+        data={"test": True},
+    ))
+    logger.log_gps_change(GpsMode.FULL)
+
+    gps = logger.get_events(event_type="gps_change")
+    cmds = logger.get_events(event_type="command")
+    assert len(gps) == 2
+    assert len(cmds) == 1
+
+
+def test_filter_by_asset_id(logger):
+    """Filter events by asset_id."""
+    logger.log_event(MissionEvent(
+        timestamp=time.time(),
+        event_type="decision",
+        asset_id="alpha",
+        domain=DomainType.SURFACE,
+        data={"info": "avoid"},
+    ))
+    logger.log_event(MissionEvent(
+        timestamp=time.time(),
+        event_type="decision",
+        asset_id="bravo",
+        domain=DomainType.SURFACE,
+        data={"info": "proceed"},
+    ))
+
+    alpha_events = logger.get_events(asset_id="alpha")
+    assert len(alpha_events) == 1
+    assert alpha_events[0].asset_id == "alpha"
+
+
+def test_filter_by_time_range(logger):
+    """Filter events by time range."""
+    t1 = 1000.0
+    t2 = 2000.0
+    t3 = 3000.0
+
+    for ts in [t1, t2, t3]:
+        logger.log_event(MissionEvent(
+            timestamp=ts,
+            event_type="state",
+            data={"ts": ts},
+        ))
+
+    events = logger.get_events(start_time=1500.0, end_time=2500.0)
+    assert len(events) == 1
+    assert events[0].timestamp == 2000.0
+
+
+def test_count_events(logger):
+    """Count events by type."""
+    logger.log_gps_change(GpsMode.DEGRADED)
+    logger.log_gps_change(GpsMode.FULL)
+    logger.log_event(MissionEvent(
+        timestamp=time.time(),
+        event_type="command",
+        data={},
+    ))
+
+    assert logger.count_events() == 3
+    assert logger.count_events("gps_change") == 2
+    assert logger.count_events("command") == 1
+
+
+def test_limit(logger):
+    """Limit the number of returned events."""
+    for i in range(10):
+        logger.log_event(MissionEvent(
+            timestamp=float(i),
+            event_type="state",
+            data={"i": i},
+        ))
+
+    events = logger.get_events(limit=3)
+    assert len(events) == 3
+    assert events[0].data["i"] == 0  # chronological order
+
+
+# ------------------------------------------------------------------
+# MissionReplay tests
+# ------------------------------------------------------------------
+
+def test_replay_get_all(tmp_db):
+    """Replay returns all events."""
+    lg = MissionLogger(db_path=tmp_db)
+    lg.log_gps_change(GpsMode.DEGRADED)
+    lg.log_event(MissionEvent(timestamp=time.time(), event_type="command", data={"x": 1}))
+    lg.close()
+
+    replay = MissionReplay(db_path=tmp_db)
+    events = replay.get_all_events()
+    assert len(events) == 2
+    replay.close()
+
+
+def test_replay_iter_states(tmp_db):
+    """Replay yields FleetState objects from state events."""
+    lg = MissionLogger(db_path=tmp_db)
+    for i in range(3):
+        state = FleetState(
+            timestamp=1000.0 + i,
+            assets=[
+                AssetState(
+                    asset_id="alpha",
+                    domain=DomainType.SURFACE,
+                    x=float(i * 100), y=0.0,
+                    heading=0.0, speed=5.0,
+                    status=AssetStatus.EXECUTING,
+                ),
+            ],
+        )
+        lg.log_state(state)
+    lg.close()
+
+    replay = MissionReplay(db_path=tmp_db)
+    states = list(replay.iter_states())
+    assert len(states) == 3
+    assert states[0].timestamp == 1000.0
+    assert states[2].assets[0].x == 200.0
+    replay.close()
+
+
+def test_replay_get_commands(tmp_db):
+    """Replay filters command events."""
+    lg = MissionLogger(db_path=tmp_db)
+    lg.log_event(MissionEvent(timestamp=time.time(), event_type="command", data={"a": 1}))
+    lg.log_event(MissionEvent(timestamp=time.time(), event_type="state", data={"b": 2}))
+    lg.close()
+
+    replay = MissionReplay(db_path=tmp_db)
+    cmds = replay.get_commands()
+    assert len(cmds) == 1
+    assert cmds[0].event_type == "command"
+    replay.close()
+
+
+def test_replay_get_gps_changes(tmp_db):
+    """Replay filters GPS change events."""
+    lg = MissionLogger(db_path=tmp_db)
+    lg.log_gps_change(GpsMode.DEGRADED)
+    lg.log_gps_change(GpsMode.FULL)
+    lg.log_event(MissionEvent(timestamp=time.time(), event_type="command", data={}))
+    lg.close()
+
+    replay = MissionReplay(db_path=tmp_db)
+    gps = replay.get_gps_changes()
+    assert len(gps) == 2
+    replay.close()
+
+
+def test_replay_summary(tmp_db):
+    """Replay summary gives correct counts and duration."""
+    lg = MissionLogger(db_path=tmp_db)
+    lg.log_event(MissionEvent(timestamp=100.0, event_type="command", data={}))
+    lg.log_event(MissionEvent(timestamp=105.0, event_type="state", data={"assets": [], "timestamp": 105.0}))
+    lg.log_event(MissionEvent(timestamp=110.0, event_type="gps_change", data={"mode": "degraded"}))
+    lg.close()
+
+    replay = MissionReplay(db_path=tmp_db)
+    s = replay.summary()
+    assert s["total_events"] == 3
+    assert s["commands"] == 1
+    assert s["state_snapshots"] == 1
+    assert s["gps_changes"] == 1
+    assert s["duration_seconds"] == 10.0
+    replay.close()
+
+
+def test_replay_events_in_range(tmp_db):
+    """Replay time-range filter works."""
+    lg = MissionLogger(db_path=tmp_db)
+    for ts in [100.0, 200.0, 300.0, 400.0]:
+        lg.log_event(MissionEvent(timestamp=ts, event_type="state", data={"ts": ts}))
+    lg.close()
+
+    replay = MissionReplay(db_path=tmp_db)
+    events = replay.get_events_in_range(150.0, 350.0)
+    assert len(events) == 2
+    assert events[0].timestamp == 200.0
+    assert events[1].timestamp == 300.0
+    replay.close()
+===== ./tests/test_formations.py =====
+"""Tests for formations.py and task_allocator.py — Step 8."""
+import math
+import pytest
+from src.schemas import Waypoint, FormationType, MissionType, DomainType, DronePattern
+from src.fleet.formations import compute_formation_offsets, apply_formation
+from src.fleet.task_allocator import get_mission_roles, allocate_assets
+
+
+VESSEL_IDS = ["alpha", "bravo", "charlie"]
+
+
+# ===== formations.py tests =====
+
+class TestComputeFormationOffsets:
+    def test_leader_always_at_origin(self):
+        for fmt in FormationType:
+            offsets = compute_formation_offsets(VESSEL_IDS, fmt, spacing=200.0)
+            assert offsets["alpha"].x == 0.0
+            assert offsets["alpha"].y == 0.0
+
+    def test_echelon_diagonal(self):
+        offsets = compute_formation_offsets(VESSEL_IDS, FormationType.ECHELON, spacing=200.0)
+        # bravo: right 200, behind 200
+        assert offsets["bravo"].x == 200.0
+        assert offsets["bravo"].y == -200.0
+        # charlie: right 400, behind 400
+        assert offsets["charlie"].x == 400.0
+        assert offsets["charlie"].y == -400.0
+
+    def test_line_abreast_side_by_side(self):
+        offsets = compute_formation_offsets(VESSEL_IDS, FormationType.LINE_ABREAST, spacing=200.0)
+        assert offsets["bravo"].x == 200.0
+        assert offsets["bravo"].y == 0.0
+        assert offsets["charlie"].x == 400.0
+        assert offsets["charlie"].y == 0.0
+
+    def test_column_single_file(self):
+        offsets = compute_formation_offsets(VESSEL_IDS, FormationType.COLUMN, spacing=200.0)
+        assert offsets["bravo"].x == 0.0
+        assert offsets["bravo"].y == -200.0
+        assert offsets["charlie"].x == 0.0
+        assert offsets["charlie"].y == -400.0
+
+    def test_spread_wider_than_line(self):
+        line = compute_formation_offsets(VESSEL_IDS, FormationType.LINE_ABREAST, spacing=200.0)
+        spread = compute_formation_offsets(VESSEL_IDS, FormationType.SPREAD, spacing=200.0)
+        assert spread["bravo"].x > line["bravo"].x
+
+    def test_independent_all_at_origin(self):
+        offsets = compute_formation_offsets(VESSEL_IDS, FormationType.INDEPENDENT, spacing=200.0)
+        for vid in VESSEL_IDS:
+            assert offsets[vid].x == 0.0
+            assert offsets[vid].y == 0.0
+
+
+class TestApplyFormation:
+    def test_heading_north_echelon(self):
+        positions = apply_formation(
+            leader_x=1000.0, leader_y=2000.0, heading_deg=0.0,
+            vessel_ids=VESSEL_IDS, formation=FormationType.ECHELON, spacing=200.0,
+        )
+        # Leader at exact position
+        assert positions["alpha"].x == pytest.approx(1000.0, abs=0.1)
+        assert positions["alpha"].y == pytest.approx(2000.0, abs=0.1)
+        # Heading north (0 deg): body-right = world +x, body-behind = world -y
+        assert positions["bravo"].x == pytest.approx(1200.0, abs=0.1)
+        assert positions["bravo"].y == pytest.approx(1800.0, abs=0.1)
+
+    def test_heading_east_column(self):
+        positions = apply_formation(
+            leader_x=0.0, leader_y=0.0, heading_deg=90.0,
+            vessel_ids=VESSEL_IDS, formation=FormationType.COLUMN, spacing=100.0,
+        )
+        # Heading east (90 deg): body-behind = world -x direction
+        assert positions["alpha"].x == pytest.approx(0.0, abs=0.1)
+        assert positions["bravo"].x == pytest.approx(-100.0, abs=0.1)
+        assert positions["charlie"].x == pytest.approx(-200.0, abs=0.1)
+
+    def test_three_vessels_echelon_maintain_spacing(self):
+        """Key test from build spec: 3 vessels in echelon maintain spacing."""
+        positions = apply_formation(
+            leader_x=500.0, leader_y=500.0, heading_deg=45.0,
+            vessel_ids=VESSEL_IDS, formation=FormationType.ECHELON, spacing=200.0,
+        )
+        # All three have distinct positions
+        coords = [(p.x, p.y) for p in positions.values()]
+        assert len(set(coords)) == 3
+
+        # Spacing between adjacent vessels is consistent
+        d01 = math.sqrt((coords[1][0] - coords[0][0])**2 +
+                        (coords[1][1] - coords[0][1])**2)
+        d12 = math.sqrt((coords[2][0] - coords[1][0])**2 +
+                        (coords[2][1] - coords[1][1])**2)
+        assert d01 == pytest.approx(d12, abs=1.0)
+
+
+# ===== task_allocator.py tests =====
+
+FLEET_ASSETS = [
+    {"asset_id": "alpha", "domain": DomainType.SURFACE},
+    {"asset_id": "bravo", "domain": DomainType.SURFACE},
+    {"asset_id": "charlie", "domain": DomainType.SURFACE},
+    {"asset_id": "eagle-1", "domain": DomainType.AIR},
+]
+
+
+class TestGetMissionRoles:
+    def test_all_mission_types_have_roles(self):
+        for mt in MissionType:
+            roles = get_mission_roles(mt)
+            assert "surface_behavior" in roles
+            assert "air_pattern" in roles
+            assert "air_altitude" in roles
+
+    def test_patrol_uses_echelon(self):
+        roles = get_mission_roles(MissionType.PATROL)
+        assert roles["surface_formation"] == FormationType.ECHELON
+
+    def test_search_uses_sweep(self):
+        roles = get_mission_roles(MissionType.SEARCH)
+        assert roles["air_pattern"] == DronePattern.SWEEP
+
+
+class TestAllocateAssets:
+    def test_allocates_all_assets(self):
+        assignments = allocate_assets(MissionType.PATROL, FLEET_ASSETS)
+        assert len(assignments) == 4
+        assert "alpha" in assignments
+        assert "eagle-1" in assignments
+
+    def test_surface_gets_no_drone_pattern(self):
+        assignments = allocate_assets(MissionType.PATROL, FLEET_ASSETS)
+        assert assignments["alpha"]["drone_pattern"] is None
+        assert assignments["alpha"]["altitude"] is None
+
+    def test_air_gets_drone_pattern(self):
+        assignments = allocate_assets(MissionType.PATROL, FLEET_ASSETS)
+        assert assignments["eagle-1"]["drone_pattern"] == DronePattern.ORBIT
+        assert assignments["eagle-1"]["altitude"] == 120.0
+
+    def test_search_assigns_sweep_to_drone(self):
+        assignments = allocate_assets(MissionType.SEARCH, FLEET_ASSETS)
+        assert assignments["eagle-1"]["drone_pattern"] == DronePattern.SWEEP
+        assert assignments["eagle-1"]["altitude"] == 80.0
+
+    def test_aerial_recon_surface_independent(self):
+        assignments = allocate_assets(MissionType.AERIAL_RECON, FLEET_ASSETS)
+        assert assignments["alpha"]["formation"] == FormationType.INDEPENDENT
+===== ./tests/test_drone_coordinator.py =====
+"""Tests for DroneCoordinator — pattern generation on top of DroneAgent."""
+import math
+import pytest
+from src.schemas import Waypoint, DronePattern, AssetStatus
+from src.dynamics.drone_dynamics import DroneAgent
+from src.fleet.drone_coordinator import DroneCoordinator
+
+
+@pytest.fixture
+def coordinator():
+    drone = DroneAgent("eagle-1", x=0.0, y=0.0, altitude=100.0)
+    return DroneCoordinator(drone)
+
+
+class TestGenerateOrbitWaypoints:
+    def test_correct_count(self, coordinator):
+        center = Waypoint(x=500.0, y=500.0)
+        wps = coordinator.generate_orbit_waypoints(center, radius=200.0)
+        # 1 center + 8 perimeter points
+        assert len(wps) == 9
+
+    def test_center_is_first(self, coordinator):
+        center = Waypoint(x=500.0, y=500.0)
+        wps = coordinator.generate_orbit_waypoints(center)
+        assert wps[0].x == center.x
+        assert wps[0].y == center.y
+
+    def test_perimeter_points_at_correct_radius(self, coordinator):
+        center = Waypoint(x=100.0, y=200.0)
+        radius = 200.0
+        wps = coordinator.generate_orbit_waypoints(center, radius=radius)
+        for wp in wps[1:]:
+            dist = math.sqrt((wp.x - center.x)**2 + (wp.y - center.y)**2)
+            assert abs(dist - radius) < 0.01
+
+
+class TestGenerateSweepWaypoints:
+    def test_zigzag_coverage(self, coordinator):
+        c1 = Waypoint(x=0.0, y=0.0)
+        c2 = Waypoint(x=300.0, y=400.0)
+        wps = coordinator.generate_sweep_waypoints(c1, c2, spacing=100.0)
+        # 4 legs (x=0,100,200,300), 2 waypoints each = 8
+        assert len(wps) == 8
+
+    def test_alternating_direction(self, coordinator):
+        c1 = Waypoint(x=0.0, y=0.0)
+        c2 = Waypoint(x=200.0, y=400.0)
+        wps = coordinator.generate_sweep_waypoints(c1, c2, spacing=100.0)
+        # First leg goes min_y -> max_y
+        assert wps[0].y == 0.0
+        assert wps[1].y == 400.0
+        # Second leg goes max_y -> min_y
+        assert wps[2].y == 400.0
+        assert wps[3].y == 0.0
+
+    def test_all_waypoints_within_bounds(self, coordinator):
+        c1 = Waypoint(x=100.0, y=100.0)
+        c2 = Waypoint(x=500.0, y=600.0)
+        wps = coordinator.generate_sweep_waypoints(c1, c2, spacing=50.0)
+        for wp in wps:
+            assert 100.0 <= wp.x <= 500.0
+            assert 100.0 <= wp.y <= 600.0
+
+
+class TestGenerateTrackWaypoints:
+    def test_returns_single_waypoint(self, coordinator):
+        target = Waypoint(x=300.0, y=300.0)
+        wps = coordinator.generate_track_waypoints(target, offset_distance=50.0)
+        assert len(wps) == 1
+
+    def test_offset_applied(self, coordinator):
+        target = Waypoint(x=300.0, y=300.0)
+        offset = 50.0
+        wps = coordinator.generate_track_waypoints(target, offset_distance=offset)
+        assert wps[0].x == 250.0
+        assert wps[0].y == 250.0
+
+
+class TestAssignPattern:
+    def test_orbit_sets_drone_pattern(self, coordinator):
+        center = Waypoint(x=500.0, y=500.0)
+        coordinator.assign_pattern(DronePattern.ORBIT, [center],
+                                   altitude=150.0, radius=200.0)
+        assert coordinator.drone.pattern == DronePattern.ORBIT
+        assert coordinator.drone.target_altitude == 150.0
+        assert coordinator.drone._orbit_center.x == center.x
+
+    def test_sweep_sets_drone_waypoints(self, coordinator):
+        c1 = Waypoint(x=0.0, y=0.0)
+        c2 = Waypoint(x=300.0, y=400.0)
+        coordinator.assign_pattern(DronePattern.SWEEP, [c1, c2],
+                                   altitude=80.0, spacing=100.0)
+        assert coordinator.drone.pattern == DronePattern.SWEEP
+        assert coordinator.drone.target_altitude == 80.0
+        assert len(coordinator.drone.waypoints) == 8
+
+    def test_track_sets_drone_waypoints(self, coordinator):
+        target = Waypoint(x=200.0, y=200.0)
+        coordinator.assign_pattern(DronePattern.TRACK, [target])
+        assert coordinator.drone.pattern == DronePattern.TRACK
+        assert len(coordinator.drone.waypoints) == 1
+
+    def test_station_hold(self, coordinator):
+        pos = Waypoint(x=100.0, y=100.0)
+        coordinator.assign_pattern(DronePattern.STATION, [pos], altitude=50.0)
+        assert coordinator.drone.target_altitude == 50.0
+        assert coordinator.drone.waypoints[0].x == 100.0
+
+
+class TestOrbitSimulation:
+    def test_drone_moves_after_orbit_assignment(self, coordinator):
+        center = Waypoint(x=500.0, y=500.0)
+        coordinator.assign_pattern(DronePattern.ORBIT, [center], radius=150.0)
+        initial_x, initial_y = coordinator.drone.x, coordinator.drone.y
+
+        for _ in range(20):
+            coordinator.drone.step(0.25)
+
+        assert (coordinator.drone.x != initial_x or
+                coordinator.drone.y != initial_y)
+        assert coordinator.drone.status == AssetStatus.EXECUTING
+
+
+class TestGetPatternInfo:
+    def test_returns_pattern_info(self, coordinator):
+        center = Waypoint(x=500.0, y=500.0)
+        coordinator.assign_pattern(DronePattern.ORBIT, [center], radius=200.0)
+        info = coordinator.get_pattern_info()
+        assert info["pattern"] == "orbit"
+        assert info["center"]["x"] == 500.0
+        assert info["orbit_radius"] == 200.0
+
+    def test_no_pattern_info(self, coordinator):
+        info = coordinator.get_pattern_info()
+        assert info["pattern"] is None
+        assert info["center"] is None
+===== ./tests/test_wiring.py =====
+"""Tests for demo wiring: DroneCoordinator, formations, return-to-base."""
+import math
+from src.fleet.fleet_manager import FleetManager
+from src.schemas import (
+    FleetCommand, AssetCommand, Waypoint,
+    DomainType, MissionType, FormationType, DronePattern, AssetStatus,
+)
+
+
+def _patrol_with_formation():
+    return FleetCommand(
+        mission_type=MissionType.PATROL,
+        assets=[
+            AssetCommand(
+                asset_id="alpha", domain=DomainType.SURFACE,
+                waypoints=[Waypoint(x=1000.0, y=0.0)], speed=5.0,
+            ),
+            AssetCommand(
+                asset_id="bravo", domain=DomainType.SURFACE,
+                waypoints=[Waypoint(x=1000.0, y=0.0)], speed=5.0,
+            ),
+        ],
+        formation=FormationType.ECHELON,
+        spacing_meters=200.0,
+    )
+
+
+def _orbit_command():
+    return FleetCommand(
+        mission_type=MissionType.PATROL,
+        assets=[
+            AssetCommand(
+                asset_id="eagle-1", domain=DomainType.AIR,
+                waypoints=[Waypoint(x=500.0, y=300.0)],
+                altitude=120.0, drone_pattern=DronePattern.ORBIT,
+            ),
+        ],
+    )
+
+
+def _sweep_command():
+    return FleetCommand(
+        mission_type=MissionType.SEARCH,
+        assets=[
+            AssetCommand(
+                asset_id="eagle-1", domain=DomainType.AIR,
+                waypoints=[Waypoint(x=0.0, y=0.0), Waypoint(x=400.0, y=400.0)],
+                altitude=80.0, drone_pattern=DronePattern.SWEEP,
+            ),
+        ],
+    )
+
+
+def _track_command():
+    return FleetCommand(
+        mission_type=MissionType.ESCORT,
+        assets=[
+            AssetCommand(
+                asset_id="eagle-1", domain=DomainType.AIR,
+                waypoints=[Waypoint(x=300.0, y=200.0)],
+                altitude=100.0, drone_pattern=DronePattern.TRACK,
+            ),
+        ],
+    )
+
+
+# ---- Formation wiring ----
+
+def test_echelon_offsets_waypoints():
+    fm = FleetManager()
+    fm.dispatch_command(_patrol_with_formation())
+
+    # Both should be executing
+    assert fm.vessels["alpha"]["status"] == AssetStatus.EXECUTING
+    assert fm.vessels["bravo"]["status"] == AssetStatus.EXECUTING
+
+    # Bravo's final waypoint should differ from alpha's due to echelon offset
+    alpha_x = fm.vessels["alpha"]["waypoints_x"][-1]
+    alpha_y = fm.vessels["alpha"]["waypoints_y"][-1]
+    bravo_x = fm.vessels["bravo"]["waypoints_x"][-1]
+    bravo_y = fm.vessels["bravo"]["waypoints_y"][-1]
+    assert (alpha_x, alpha_y) != (bravo_x, bravo_y), \
+        "Echelon should offset bravo from alpha"
+
+
+def test_independent_no_offset():
+    cmd = FleetCommand(
+        mission_type=MissionType.PATROL,
+        assets=[
+            AssetCommand(
+                asset_id="alpha", domain=DomainType.SURFACE,
+                waypoints=[Waypoint(x=1000.0, y=0.0)], speed=5.0,
+            ),
+            AssetCommand(
+                asset_id="bravo", domain=DomainType.SURFACE,
+                waypoints=[Waypoint(x=1000.0, y=0.0)], speed=5.0,
+            ),
+        ],
+        formation=FormationType.INDEPENDENT,
+    )
+    fm = FleetManager()
+    fm.dispatch_command(cmd)
+
+    # With INDEPENDENT, both get the same target waypoint
+    alpha_x = fm.vessels["alpha"]["waypoints_x"][-1]
+    bravo_x = fm.vessels["bravo"]["waypoints_x"][-1]
+    assert alpha_x == bravo_x
+
+
+# ---- DroneCoordinator wiring ----
+
+def test_orbit_uses_coordinator():
+    fm = FleetManager()
+    fm.dispatch_command(_orbit_command())
+
+    assert fm.drone.status == AssetStatus.EXECUTING
+    assert fm.drone.pattern == DronePattern.ORBIT
+    assert fm.drone._orbit_center is not None
+    # Coordinator should have generated orbit waypoints (center + circle points)
+    assert len(fm.drone.waypoints) > 1
+    assert fm.drone.target_altitude == 120.0
+
+
+def test_sweep_uses_coordinator():
+    fm = FleetManager()
+    fm.dispatch_command(_sweep_command())
+
+    assert fm.drone.status == AssetStatus.EXECUTING
+    assert fm.drone.pattern == DronePattern.SWEEP
+    # Sweep should generate raster waypoints (more than 2 input points)
+    assert len(fm.drone.waypoints) > 2
+    assert fm.drone.target_altitude == 80.0
+
+
+def test_track_uses_coordinator():
+    fm = FleetManager()
+    fm.dispatch_command(_track_command())
+
+    assert fm.drone.status == AssetStatus.EXECUTING
+    assert fm.drone.pattern == DronePattern.TRACK
+    assert fm.drone.target_altitude == 100.0
+
+
+# ---- Return to base ----
+
+def test_return_to_base_moved_assets():
+    fm = FleetManager()
+    # Dispatch a command to move ALL assets far from home
+    cmd = FleetCommand(
+        mission_type=MissionType.PATROL,
+        assets=[
+            AssetCommand(
+                asset_id="alpha", domain=DomainType.SURFACE,
+                waypoints=[Waypoint(x=5000.0, y=5000.0)], speed=5.0,
+            ),
+            AssetCommand(
+                asset_id="bravo", domain=DomainType.SURFACE,
+                waypoints=[Waypoint(x=5000.0, y=5000.0)], speed=5.0,
+            ),
+            AssetCommand(
+                asset_id="charlie", domain=DomainType.SURFACE,
+                waypoints=[Waypoint(x=5000.0, y=5000.0)], speed=5.0,
+            ),
+            AssetCommand(
+                asset_id="eagle-1", domain=DomainType.AIR,
+                waypoints=[Waypoint(x=3000.0, y=3000.0)],
+                altitude=150.0,
+            ),
+        ],
+    )
+    fm.dispatch_command(cmd)
+
+    # Step enough so they all move away from home
+    for _ in range(40):
+        fm.step(0.25)
+
+    # Trigger return to base
+    fm.return_to_base()
+
+    # All moved vessels should be RETURNING
+    for vid in ("alpha", "bravo", "charlie"):
+        assert fm.vessels[vid]["status"] == AssetStatus.RETURNING
+
+    # Drone should be RETURNING
+    assert fm.drone.status == AssetStatus.RETURNING
+
+    # Mission should be cleared
+    assert fm.active_mission is None
+    assert fm.formation == FormationType.INDEPENDENT
+
+
+def test_return_to_base_already_home_goes_idle():
+    """Assets already at home should go IDLE, not stuck RETURNING."""
+    fm = FleetManager()
+    # Don't move anything — all at home
+    fm.return_to_base()
+
+    # Charlie starts at (400, 0) which IS its home — should be IDLE
+    assert fm.vessels["charlie"]["status"] == AssetStatus.IDLE
+    # Drone starts at (200, -100) which IS its home — should be IDLE
+    assert fm.drone.status == AssetStatus.IDLE
+
+
+def test_return_to_base_targets_home():
+    """Moved assets get waypoints pointing to home."""
+    fm = FleetManager()
+    # Move alpha far away first
+    cmd = FleetCommand(
+        mission_type=MissionType.PATROL,
+        assets=[
+            AssetCommand(
+                asset_id="alpha", domain=DomainType.SURFACE,
+                waypoints=[Waypoint(x=5000.0, y=5000.0)], speed=5.0,
+            ),
+            AssetCommand(
+                asset_id="eagle-1", domain=DomainType.AIR,
+                waypoints=[Waypoint(x=3000.0, y=3000.0)],
+                altitude=150.0,
+            ),
+        ],
+    )
+    fm.dispatch_command(cmd)
+    for _ in range(40):
+        fm.step(0.25)
+
+    fm.return_to_base()
+
+    # Alpha's last waypoint should be its home position (0.0, 0.0) in nmi
+    alpha_wp_x = fm.vessels["alpha"]["waypoints_x"][-1]
+    alpha_wp_y = fm.vessels["alpha"]["waypoints_y"][-1]
+    assert abs(alpha_wp_x) < 0.01
+    assert abs(alpha_wp_y) < 0.01
+
+    # Drone should have home waypoint (200, -100)
+    assert fm.drone.status == AssetStatus.RETURNING
+    assert len(fm.drone.waypoints) == 1
+    assert abs(fm.drone.waypoints[0].x - 200.0) < 0.01
+    assert abs(fm.drone.waypoints[0].y - (-100.0)) < 0.01
+===== ./tests/test_integration_logging.py =====
+"""
+Integration tests — MissionLogger wired into FleetCommander and API.
+Verifies that commands, GPS changes, and log endpoints work end-to-end.
+"""
+import pytest
+from unittest.mock import patch
+from fastapi.testclient import TestClient
+
+from src.schemas import (
+    AssetCommand, DomainType, FleetCommand, FormationType,
+    GpsDeniedRequest, GpsMode, MissionType, Waypoint,
+)
+from src.fleet.fleet_commander import FleetCommander
+from src.fleet.fleet_manager import FleetManager
+from src.logging.mission_logger import MissionLogger
+from src.api.server import create_app
+
+
+def _fake_command():
+    return FleetCommand(
+        mission_type=MissionType.PATROL,
+        assets=[
+            AssetCommand(
+                asset_id="alpha",
+                domain=DomainType.SURFACE,
+                waypoints=[Waypoint(x=500, y=500)],
+                speed=5.0,
+            ),
+        ],
+        raw_text="patrol harbor",
+    )
+
+
+@pytest.fixture
+def tmp_logger(tmp_path):
+    lg = MissionLogger(db_path=str(tmp_path / "test.db"))
+    yield lg
+    lg.close()
+
+
+# ------------------------------------------------------------------
+# FleetCommander + Logger integration
+# ------------------------------------------------------------------
+
+@patch("src.fleet.fleet_commander.parse_fleet_command")
+def test_commander_logs_command_on_success(mock_parse, tmp_logger):
+    """Successful command dispatch logs a command event."""
+    mock_parse.return_value = _fake_command()
+
+    fc = FleetCommander(logger=tmp_logger)
+    resp = fc.handle_text("patrol harbor")
+
+    assert resp.success is True
+    events = tmp_logger.get_events(event_type="command")
+    assert len(events) == 1
+    assert events[0].data["mission_type"] == "patrol"
+
+
+@patch("src.fleet.fleet_commander.parse_fleet_command")
+def test_commander_no_log_on_failure(mock_parse, tmp_logger):
+    """Failed command dispatch does NOT log a command event."""
+    mock_parse.side_effect = RuntimeError("LLM down")
+
+    fc = FleetCommander(logger=tmp_logger)
+    resp = fc.handle_text("bad command")
+
+    assert resp.success is False
+    events = tmp_logger.get_events(event_type="command")
+    assert len(events) == 0
+
+
+def test_commander_logs_gps_change(tmp_logger):
+    """GPS mode change logs a gps_change event."""
+    fc = FleetCommander(logger=tmp_logger)
+    fc.handle_gps_mode(GpsDeniedRequest(mode=GpsMode.DEGRADED, noise_meters=40.0))
+
+    events = tmp_logger.get_events(event_type="gps_change")
+    assert len(events) == 1
+    assert events[0].data["mode"] == "degraded"
+    assert events[0].data["noise_meters"] == 40.0
+
+
+def test_commander_works_without_logger():
+    """Commander still works fine with no logger (backwards compat)."""
+    fc = FleetCommander()
+    assert fc.logger is None
+    fc.handle_gps_mode(GpsDeniedRequest(mode=GpsMode.DEGRADED))
+    assert fc.fleet_manager.gps_mode == GpsMode.DEGRADED
+
+
+# ------------------------------------------------------------------
+# API log endpoints
+# ------------------------------------------------------------------
+
+@pytest.fixture
+def app_with_logger(tmp_path):
+    logger = MissionLogger(db_path=str(tmp_path / "api_test.db"))
+    commander = FleetCommander(logger=logger)
+    app = create_app(commander=commander, logger=logger)
+    yield TestClient(app), logger
+    logger.close()
+
+
+class TestLogEndpoints:
+    def test_get_logs_empty(self, app_with_logger):
+        client, _ = app_with_logger
+        resp = client.get("/api/logs")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["events"] == []
+        assert data["count"] == 0
+
+    def test_get_logs_after_command(self, app_with_logger):
+        client, _ = app_with_logger
+        with patch("src.fleet.fleet_commander.parse_fleet_command", return_value=_fake_command()):
+            client.post("/api/command", json={"text": "patrol harbor"})
+
+        resp = client.get("/api/logs")
+        data = resp.json()
+        assert data["count"] == 1
+        assert data["events"][0]["event_type"] == "command"
+
+    def test_get_logs_filter_by_type(self, app_with_logger):
+        client, _ = app_with_logger
+        with patch("src.fleet.fleet_commander.parse_fleet_command", return_value=_fake_command()):
+            client.post("/api/command", json={"text": "patrol"})
+        client.post("/api/gps-mode", json={"mode": "degraded", "noise_meters": 25.0, "update_rate_hz": 1.0})
+
+        resp = client.get("/api/logs?event_type=gps_change")
+        data = resp.json()
+        assert data["count"] == 1
+        assert data["events"][0]["event_type"] == "gps_change"
+
+    def test_get_logs_summary(self, app_with_logger):
+        client, _ = app_with_logger
+        with patch("src.fleet.fleet_commander.parse_fleet_command", return_value=_fake_command()):
+            client.post("/api/command", json={"text": "patrol"})
+            client.post("/api/command", json={"text": "patrol again"})
+        client.post("/api/gps-mode", json={"mode": "degraded", "noise_meters": 25.0, "update_rate_hz": 1.0})
+
+        resp = client.get("/api/logs/summary")
+        data = resp.json()
+        assert data["total_events"] == 3
+        assert data["commands"] == 2
+        assert data["gps_changes"] == 1
+
+    def test_get_logs_no_logger(self):
+        """Endpoints return empty when no logger is set."""
+        commander = FleetCommander()
+        app = create_app(commander=commander, logger=None)
+        # Manually remove logger from app state to simulate no-logger
+        app.state.logger = None
+        client = TestClient(app)
+
+        resp = client.get("/api/logs")
+        assert resp.json()["count"] == 0
+
+        resp = client.get("/api/logs/summary")
+        assert resp.json()["total_events"] == 0
+===== ./tests/test_gps_denied.py =====
+"""Tests for GPS-denied degradation engine."""
+from src.utils.gps_denied import degrade_position, should_update
+
+
+def test_degrade_adds_noise():
+    results = [degrade_position(100.0, 200.0, noise_meters=25.0) for _ in range(100)]
+    xs = [r[0] for r in results]
+    # Not all identical — noise is being applied
+    assert len(set(xs)) > 1
+    # Accuracy field matches noise param
+    assert all(r[2] == 25.0 for r in results)
+    print("Noise OK")
+
+
+def test_degrade_zero_noise():
+    nx, ny, acc = degrade_position(50.0, 50.0, noise_meters=0.0)
+    assert nx == 50.0 and ny == 50.0
+    print("Zero noise OK")
+
+
+def test_should_update_rate_limit():
+    # First call always passes
+    assert should_update("test-asset", update_rate_hz=1.0) is True
+    # Immediate second call should be rate-limited
+    assert should_update("test-asset", update_rate_hz=1.0) is False
+    print("Rate limit OK")
+
+
+if __name__ == "__main__":
+    test_degrade_adds_noise()
+    test_degrade_zero_noise()
+    test_should_update_rate_limit()
+    print("\nAll GPS-denied tests passed!")
+===== ./tests/test_api.py =====
+"""Tests for FastAPI backend — server, routes, WebSocket."""
+import pytest
+from unittest.mock import patch, MagicMock
+from fastapi.testclient import TestClient
+
+from src.schemas import (
+    FleetCommand, CommandResponse, FleetState, AssetState,
+    MissionType, DomainType, AssetStatus, FormationType,
+    GpsMode, AssetCommand, Waypoint,
+)
+from src.fleet.fleet_commander import FleetCommander
+from src.api.server import create_app
+
+
+@pytest.fixture
+def commander():
+    """FleetCommander with real FleetManager but mocked LLM."""
+    return FleetCommander()
+
+
+@pytest.fixture
+def client(commander):
+    app = create_app(commander)
+    return TestClient(app)
+
+
+# ===== GET /api/assets =====
+
+class TestGetAssets:
+    def test_returns_fleet_state(self, client):
+        resp = client.get("/api/assets")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "assets" in data
+        assert "timestamp" in data
+        assert len(data["assets"]) == 4  # 3 vessels + 1 drone
+
+    def test_contains_both_domains(self, client):
+        resp = client.get("/api/assets")
+        data = resp.json()
+        domains = {a["domain"] for a in data["assets"]}
+        assert "surface" in domains
+        assert "air" in domains
+
+
+# ===== POST /api/command =====
+
+class TestPostCommand:
+    def test_command_with_mocked_llm(self, client):
+        """Mock the LLM to return a known FleetCommand."""
+        fake_cmd = FleetCommand(
+            mission_type=MissionType.PATROL,
+            assets=[
+                AssetCommand(
+                    asset_id="alpha",
+                    domain=DomainType.SURFACE,
+                    waypoints=[Waypoint(x=500, y=500)],
+                    speed=5.0,
+                ),
+            ],
+        )
+        with patch("src.fleet.fleet_commander.parse_fleet_command", return_value=fake_cmd):
+            resp = client.post("/api/command", json={"text": "patrol harbor"})
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["success"] is True
+        assert data["fleet_command"]["mission_type"] == "patrol"
+
+    def test_command_error_returns_failure(self, client):
+        with patch("src.fleet.fleet_commander.parse_fleet_command",
+                    side_effect=Exception("LLM timeout")):
+            resp = client.post("/api/command", json={"text": "bad command"})
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["success"] is False
+        assert "LLM timeout" in data["error"]
+
+
+# ===== GET /api/mission =====
+
+class TestGetMission:
+    def test_no_active_mission(self, client):
+        resp = client.get("/api/mission")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["active_mission"] is None
+        assert data["last_command"] is None
+
+    def test_after_command(self, client):
+        fake_cmd = FleetCommand(
+            mission_type=MissionType.SEARCH,
+            assets=[
+                AssetCommand(
+                    asset_id="bravo",
+                    domain=DomainType.SURFACE,
+                    waypoints=[Waypoint(x=100, y=200)],
+                ),
+            ],
+        )
+        with patch("src.fleet.fleet_commander.parse_fleet_command", return_value=fake_cmd):
+            client.post("/api/command", json={"text": "search area"})
+
+        resp = client.get("/api/mission")
+        data = resp.json()
+        assert data["active_mission"] == "search"
+        assert data["last_command"] is not None
+
+
+# ===== POST /api/gps-mode =====
+
+class TestGpsMode:
+    def test_toggle_degraded(self, client, commander):
+        resp = client.post("/api/gps-mode", json={
+            "mode": "degraded",
+            "noise_meters": 30.0,
+            "update_rate_hz": 1.0,
+        })
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["gps_mode"] == "degraded"
+        assert commander.fleet_manager.gps_mode == GpsMode.DEGRADED
+
+    def test_toggle_back_to_full(self, client, commander):
+        client.post("/api/gps-mode", json={"mode": "degraded", "noise_meters": 25.0, "update_rate_hz": 1.0})
+        client.post("/api/gps-mode", json={"mode": "full", "noise_meters": 0.0, "update_rate_hz": 4.0})
+        assert commander.fleet_manager.gps_mode == GpsMode.FULL
+
+
+# ===== WebSocket /ws =====
+
+class TestWebSocket:
+    def test_receives_fleet_state(self, client):
+        with client.websocket_connect("/ws") as ws:
+            data = ws.receive_json()
+            assert "assets" in data
+            assert "timestamp" in data
+            assert len(data["assets"]) == 4
+===== ./tests/test_fleet_manager.py =====
+"""Tests for FleetManager — multi-domain fleet coordinator."""
+import math
+from src.fleet.fleet_manager import FleetManager
+from src.schemas import (
+    FleetCommand, AssetCommand, Waypoint,
+    DomainType, MissionType, FormationType, GpsMode, AssetStatus,
+)
+
+
+def _make_patrol_command():
+    """Build a multi-domain patrol command."""
+    return FleetCommand(
+        mission_type=MissionType.PATROL,
+        assets=[
+            AssetCommand(
+                asset_id="alpha",
+                domain=DomainType.SURFACE,
+                waypoints=[Waypoint(x=1000.0, y=0.0)],
+                speed=5.0,
+            ),
+            AssetCommand(
+                asset_id="bravo",
+                domain=DomainType.SURFACE,
+                waypoints=[Waypoint(x=1000.0, y=200.0)],
+                speed=5.0,
+            ),
+            AssetCommand(
+                asset_id="eagle-1",
+                domain=DomainType.AIR,
+                waypoints=[Waypoint(x=500.0, y=100.0)],
+                altitude=150.0,
+            ),
+        ],
+        formation=FormationType.LINE_ABREAST,
+    )
+
+
+def test_fleet_manager_creates_4_assets():
+    fm = FleetManager()
+    state = fm.get_fleet_state()
+    assert len(state.assets) == 4
+    ids = {a.asset_id for a in state.assets}
+    assert ids == {"alpha", "bravo", "charlie", "eagle-1"}
+
+
+def test_dispatch_multi_domain_command():
+    fm = FleetManager()
+    cmd = _make_patrol_command()
+    fm.dispatch_command(cmd)
+
+    # Surface vessel alpha got waypoint
+    v_alpha = fm.vessels["alpha"]
+    assert v_alpha["i_wpt"] == 1
+    assert v_alpha["desired_speed"] == 5.0
+    assert v_alpha["status"] == AssetStatus.EXECUTING
+
+    # Drone got waypoint
+    assert fm.drone.status == AssetStatus.EXECUTING
+    assert len(fm.drone.waypoints) == 1
+    assert fm.drone.target_altitude == 150.0
+
+    # Mission tracking
+    assert fm.active_mission == MissionType.PATROL
+    assert fm.formation == FormationType.LINE_ABREAST
+
+
+def test_step_changes_positions():
+    fm = FleetManager()
+    cmd = _make_patrol_command()
+    fm.dispatch_command(cmd)
+
+    state_before = fm.get_fleet_state()
+    positions_before = {a.asset_id: (a.x, a.y) for a in state_before.assets}
+
+    dt = 0.1
+    for _ in range(10):
+        fm.step(dt)
+
+    state_after = fm.get_fleet_state()
+    positions_after = {a.asset_id: (a.x, a.y) for a in state_after.assets}
+
+    # alpha and bravo should have moved (they got commands)
+    for aid in ("alpha", "bravo"):
+        bx, by = positions_before[aid]
+        ax, ay = positions_after[aid]
+        assert (ax, ay) != (bx, by), f"{aid} should have moved"
+
+    # eagle-1 should have moved
+    eb = positions_before["eagle-1"]
+    ea = positions_after["eagle-1"]
+    assert (ea[0], ea[1]) != (eb[0], eb[1]), "eagle-1 should have moved"
+
+
+def test_gps_denied_adds_noise():
+    fm = FleetManager()
+
+    # Get clean positions
+    clean = fm.get_fleet_state()
+    clean_pos = {a.asset_id: (a.x, a.y) for a in clean.assets}
+
+    # Enable degraded GPS
+    fm.set_gps_mode(GpsMode.DEGRADED, noise_meters=50.0)
+
+    # Sample multiple times — at least one position should differ
+    any_different = False
+    for _ in range(5):
+        degraded = fm.get_fleet_state()
+        for a in degraded.assets:
+            cx, cy = clean_pos[a.asset_id]
+            # GPS noise is Gaussian so almost certainly non-zero
+            if abs(a.x - cx) > 0.01 or abs(a.y - cy) > 0.01:
+                any_different = True
+                break
+        if any_different:
+            break
+
+    assert any_different, "GPS-denied mode should add noise to positions"
+    assert fm.gps_mode == GpsMode.DEGRADED
+
+
+def test_get_fleet_state_domains():
+    fm = FleetManager()
+    state = fm.get_fleet_state()
+
+    surface = [a for a in state.assets if a.domain == DomainType.SURFACE]
+    air = [a for a in state.assets if a.domain == DomainType.AIR]
+
+    assert len(surface) == 3
+    assert len(air) == 1
+    assert air[0].asset_id == "eagle-1"
+    assert air[0].altitude is not None
+
+    # FleetState metadata
+    assert state.gps_mode == GpsMode.FULL
+    assert state.timestamp > 0
+===== ./tests/test_drone_dynamics.py =====
+"""Tests for DroneAgent — waypoint following, orbit, sweep, state output."""
+from src.dynamics.drone_dynamics import DroneAgent
+from src.schemas import Waypoint, DomainType, DronePattern, AssetStatus
+
+
+def test_import():
+    agent = DroneAgent("eagle-1")
+    assert agent.asset_id == "eagle-1"
+    print("Import OK")
+
+
+def test_waypoint_following():
+    agent = DroneAgent("eagle-1", x=0, y=0, altitude=100)
+    agent.set_waypoints([Waypoint(x=100, y=0)])
+    assert agent.status == AssetStatus.EXECUTING
+
+    for _ in range(200):
+        agent.step(0.25)
+
+    assert abs(agent.x - 100) < 5.0
+    assert agent.status == AssetStatus.IDLE
+    print("Waypoint following OK")
+
+
+def test_orbit_pattern():
+    agent = DroneAgent("eagle-1", x=0, y=0)
+    center = Waypoint(x=0, y=0)
+    agent.set_waypoints([center], pattern=DronePattern.ORBIT)
+
+    for _ in range(100):
+        agent.step(0.25)
+
+    # Should still be executing (orbit loops forever)
+    assert agent.status == AssetStatus.EXECUTING
+    # Should be roughly orbit_radius from center
+    import math
+    dist = math.sqrt(agent.x**2 + agent.y**2)
+    assert abs(dist - 150) < 5.0
+    print("Orbit pattern OK")
+
+
+def test_sweep_loops():
+    agent = DroneAgent("eagle-1", x=0, y=0)
+    wps = [Waypoint(x=50, y=0), Waypoint(x=50, y=50), Waypoint(x=0, y=50)]
+    agent.set_waypoints(wps, pattern=DronePattern.SWEEP)
+
+    for _ in range(500):
+        agent.step(0.25)
+
+    # Sweep loops, so should still be executing
+    assert agent.status == AssetStatus.EXECUTING
+    print("Sweep loops OK")
+
+
+def test_get_state():
+    agent = DroneAgent("eagle-1", x=10, y=20, altitude=80)
+    state = agent.get_state()
+    assert state.asset_id == "eagle-1"
+    assert state.domain == DomainType.AIR
+    assert state.x == 10.0
+    assert state.y == 20.0
+    assert state.altitude == 80.0
+    assert state.status == AssetStatus.IDLE
+    print("get_state OK")
+
+
+def test_altitude_transition():
+    agent = DroneAgent("eagle-1", x=0, y=0, altitude=50)
+    agent.target_altitude = 100
+    agent.set_waypoints([Waypoint(x=1000, y=0)])
+
+    for _ in range(100):
+        agent.step(0.25)
+
+    assert abs(agent.altitude - 100) < 2.0
+    print("Altitude transition OK")
+
+
+if __name__ == "__main__":
+    test_import()
+    test_waypoint_following()
+    test_orbit_pattern()
+    test_sweep_loops()
+    test_get_state()
+    test_altitude_transition()
+    print("\nAll drone tests passed!")

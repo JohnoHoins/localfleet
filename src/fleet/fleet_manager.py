@@ -157,7 +157,10 @@ class FleetManager:
                 if i_wpt >= len(wpts_x):
                     v["status"] = AssetStatus.IDLE
                     v["i_wpt"] = len(wpts_x) - 1
-                    i_wpt = v["i_wpt"]
+                    inputs = [0.0, 0.0]
+                    x_dot = vessel_dynamics(state, inputs)
+                    v["state"] = integration(state, x_dot, dt)
+                    continue
 
                 psi_desired = planning(wpts_x, wpts_y, x_nmi, y_nmi, i_wpt)
                 if psi_desired is None:

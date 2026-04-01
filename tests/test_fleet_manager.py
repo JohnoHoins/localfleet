@@ -133,3 +133,38 @@ def test_get_fleet_state_domains():
     # FleetState metadata
     assert state.gps_mode == GpsMode.FULL
     assert state.timestamp > 0
+
+
+def test_vessel_reaches_waypoint_and_goes_idle():
+    """Vessel should reach a waypoint 1000m away and stop (not circle forever)."""
+    fm = FleetManager()
+    cmd = FleetCommand(
+        mission_type=MissionType.PATROL,
+        assets=[
+            AssetCommand(
+                asset_id="alpha",
+                domain=DomainType.SURFACE,
+                waypoints=[Waypoint(x=1000.0, y=0.0)],
+                speed=5.0,
+            ),
+        ],
+    )
+    fm.dispatch_command(cmd)
+
+    dt = 0.25
+    max_steps = 4000  # 1000 seconds at dt=0.25 — plenty for 1000m at 5m/s
+    for step_i in range(max_steps):
+        fm.step(dt)
+        if fm.vessels["alpha"]["status"] == AssetStatus.IDLE:
+            break
+
+    assert fm.vessels["alpha"]["status"] == AssetStatus.IDLE, (
+        f"Vessel alpha should be IDLE after reaching waypoint, "
+        f"but is {fm.vessels['alpha']['status']} after {step_i+1} steps"
+    )
+
+    # Verify it's reasonably close to the target (within 300m)
+    final_x = fm.vessels["alpha"]["state"][0]
+    final_y = fm.vessels["alpha"]["state"][1]
+    dist = math.sqrt((final_x - 1000.0)**2 + (final_y - 0.0)**2)
+    assert dist < 300.0, f"Vessel should be near waypoint, but is {dist:.1f}m away"
