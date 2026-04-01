@@ -9,7 +9,7 @@ import numpy as np
 from typing import Dict, List
 
 from src.schemas import (
-    FleetCommand, FleetState, AssetState, AssetCommand,
+    FleetCommand, FleetState, AssetState, AssetCommand, Contact,
     DomainType, AssetStatus, GpsMode, MissionType, Waypoint, FormationType,
     DronePattern,
 )
@@ -58,6 +58,9 @@ class FleetManager:
         }
         self.home_positions["eagle-1"] = Waypoint(x=200.0, y=-100.0)
 
+        # Contacts (simulated targets in the operating area)
+        self.contacts: Dict[str, Contact] = {}
+
         # GPS mode
         self.gps_mode = GpsMode.FULL
         self.noise_meters = 25.0
@@ -66,6 +69,24 @@ class FleetManager:
         self.active_mission: MissionType | None = None
         self.formation = FormationType.INDEPENDENT
         self.comms_lost_behavior: str = "return_to_base"
+
+    # ------------------------------------------------------------------
+    # Contact (target) management
+    # ------------------------------------------------------------------
+    def spawn_contact(self, contact_id: str, x: float, y: float,
+                      heading: float, speed: float,
+                      domain: DomainType = DomainType.SURFACE) -> Contact:
+        """Create a simulated target moving through the operating area."""
+        contact = Contact(
+            contact_id=contact_id, x=x, y=y,
+            heading=heading, speed=speed, domain=domain,
+        )
+        self.contacts[contact_id] = contact
+        return contact
+
+    def remove_contact(self, contact_id: str) -> bool:
+        """Remove a contact by ID. Returns True if it existed."""
+        return self.contacts.pop(contact_id, None) is not None
 
     # ------------------------------------------------------------------
     # Command dispatch
@@ -192,6 +213,11 @@ class FleetManager:
             x_dot = vessel_dynamics(state, inputs)
             v["state"] = integration(state, x_dot, dt)
 
+        # Contacts — straight-line motion
+        for contact in self.contacts.values():
+            contact.x += contact.speed * math.cos(contact.heading) * dt
+            contact.y += contact.speed * math.sin(contact.heading) * dt
+
         # Drone
         self.drone.step(dt)
 
@@ -239,6 +265,7 @@ class FleetManager:
             active_mission=self.active_mission,
             formation=self.formation,
             gps_mode=self.gps_mode,
+            contacts=list(self.contacts.values()),
         )
 
     # ------------------------------------------------------------------

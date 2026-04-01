@@ -43,7 +43,8 @@ User (voice/text) → FleetCommander → Ollama → FleetCommand (JSON)
 ## Assets (scope locked)
 - 3 surface vessels: alpha, bravo, charlie
 - 1 drone: eagle-1
-- 5 mission types: patrol, search, escort, loiter, aerial_recon
+- 6 mission types: patrol, search, escort, loiter, aerial_recon, intercept
+- Contacts: simulated targets via `fleet_manager.spawn_contact()`, rendered in FleetState
 
 ## Absolute Rules
 1. **SCHEMAS ARE GOD** — All types from `src/schemas.py`. Never modify schemas. Fix the module.
@@ -51,7 +52,7 @@ User (voice/text) → FleetCommander → Ollama → FleetCommand (JSON)
 3. **TEST BEFORE MOVING ON** — Run tests in the same session.
 4. **NEVER REFACTOR WORKING CODE** — If it works, don't "improve" it.
 5. **BUILD BOTTOM-UP** — Follow dependency order.
-6. **SCOPE IS LOCKED** — 4 assets, 5 mission types, no feature creep.
+6. **SCOPE IS LOCKED** — 4 assets, 6 mission types, no feature creep.
 
 ## Running
 ```bash
@@ -75,6 +76,8 @@ cd dashboard && pnpm dev
 - **Simulation tick**: dt=0.25s, WebSocket at 4Hz
 - **Coordinate origin**: ORIGIN_LAT=42.0, ORIGIN_LNG=-70.0 (off Cape Cod). Defined in `dashboard/src/components/FleetMap.jsx` and `src/navigation/land_check.py`
 - **Land avoidance**: `land_check.py` has simplified Cape Cod polygon (~500m accuracy). `land_repulsion_heading()` is called in `fleet_manager.py step()` after `planning()` and before the PID controller. Returns heading correction in radians. Extensible via `LAND_POLYGONS` list.
+- **Contacts**: `fleet_manager.py` has `contacts` dict, `spawn_contact()`/`remove_contact()` methods, straight-line motion in `step()`, and contacts included in `FleetState`. REST endpoints at `/api/contacts`.
+- **Intercept mission**: One-shot waypoint dispatch to target position. Drone gets TRACK pattern. No continuous pursuit — fleet navigates to where the target IS at dispatch time.
 
 ## Reference Files
 Context dumps used during project creation are in `docs/reference/`:

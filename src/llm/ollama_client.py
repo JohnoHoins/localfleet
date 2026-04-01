@@ -35,7 +35,8 @@ CRITICAL RULES:
 4. For air assets: ALWAYS set altitude, drone_pattern (orbit/sweep/track/station), and speed 10-20.
 5. For surface assets: speed 3-8 m/s, domain:"surface".
 6. Generate waypoints in meters, range 0-2000. Never exceed 5000 in any axis.
-7. Pick the best mission_type: patrol, search, escort, loiter, aerial_recon.
+7. Pick the best mission_type: patrol, search, escort, loiter, aerial_recon, intercept.
+   - Use "intercept" when the user wants the fleet to converge on a target/contact position.
 8. If no formation specified, use "independent".
 
 DO NOT:
@@ -57,7 +58,10 @@ EXAMPLE 4 — "All vessels move to 100 100":
 assets: [alpha(surface, waypoints:[{x:100,y:100}], speed:5), bravo(surface, waypoints:[{x:100,y:100}], speed:5), charlie(surface, waypoints:[{x:100,y:100}], speed:5)], mission_type:"patrol", formation:"independent".
 
 EXAMPLE 5 — "Search the northern area":
-Generate reasonable waypoints in the operating area, e.g. assets: [alpha(surface, waypoints:[{x:400,y:1500}], speed:5), bravo(surface, waypoints:[{x:800,y:1500}], speed:5)], mission_type:"search"."""
+Generate reasonable waypoints in the operating area, e.g. assets: [alpha(surface, waypoints:[{x:400,y:1500}], speed:5), bravo(surface, waypoints:[{x:800,y:1500}], speed:5)], mission_type:"search".
+
+EXAMPLE 6 — "Intercept contact at 1500 800, all assets":
+assets: [alpha(surface, waypoints:[{x:1500,y:800}], speed:5), bravo(surface, waypoints:[{x:1500,y:800}], speed:5), charlie(surface, waypoints:[{x:1500,y:800}], speed:5), eagle-1(air, waypoints:[{x:1500,y:800}], speed:15, altitude:100, drone_pattern:"track")], mission_type:"intercept", formation:"echelon"."""
 
 
 def test_connection() -> bool:

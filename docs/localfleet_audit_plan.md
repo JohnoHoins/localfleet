@@ -760,6 +760,48 @@ external data files. Extensible: add RI harbor polygons by appending to `LAND_PO
 
 ---
 
+## AUDIT 4 STATUS UPDATE (Completed 2026-04-01)
+
+**INTERCEPT MISSION + CONTACT TRACKING BUILT.** 141 tests passing (136 existing + 5 new).
+
+**Schema additions (`src/schemas.py`):**
+- `INTERCEPT = "intercept"` added to `MissionType` enum (now 6 mission types)
+- `Contact` model: `contact_id`, `x`, `y`, `heading` (radians, math convention), `speed` (m/s), `domain`
+- `contacts: List[Contact] = []` field added to `FleetState`
+
+**Contact simulation (`src/fleet/fleet_manager.py`):**
+- `contacts` dict in `__init__()` — starts empty
+- `spawn_contact(contact_id, x, y, heading, speed, domain)` — creates simulated target
+- `remove_contact(contact_id)` — removes by ID, returns bool
+- In `step()`: contacts move in straight lines — `x += speed * cos(heading) * dt`
+- In `get_fleet_state()`: contacts included in FleetState response
+
+**Intercept behavior:** One-shot waypoint dispatch. Surface vessels navigate to target position via existing waypoint nav. Drone assigned TRACK pattern. No continuous pursuit — dynamic re-targeting is a future enhancement.
+
+**LLM update (`src/llm/ollama_client.py`):**
+- Added `intercept` to mission type list in system prompt rule #7
+- Added Example 6: intercept command with echelon formation and drone TRACK
+
+**API endpoints (`src/api/routes.py`):**
+- `GET /api/contacts` — list active contacts
+- `POST /api/contacts` — spawn contact (contact_id, x, y, heading, speed, domain)
+- `DELETE /api/contacts/{contact_id}` — remove contact
+
+**Tests (`tests/test_intercept.py` — 5 new tests):**
+- `test_spawn_and_remove_contact` — create, verify, remove, verify gone
+- `test_contact_moves_in_step` — straight-line motion matches expected displacement
+- `test_intercept_dispatch_sets_waypoints` — vessels EXECUTING, drone TRACK, mission recorded
+- `test_contacts_in_fleet_state` — contacts appear/disappear in FleetState
+- `test_intercept_mission_vessels_converge` — 200-step integration, all assets closer to target
+
+**What's NOT in this audit (deferred):**
+- Continuous pursuit / dynamic re-targeting (future enhancement)
+- Formation maintenance during transit (formations applied at dispatch only)
+- Land-aware return-to-base (Phase 4 of RI roadmap, needs channel_nav.py)
+- Dashboard contact markers (Audit 5 scope)
+
+---
+
 ## FUTURE GOAL: Rhode Island Harbor Navigation — Full Roadmap
 
 The end-state demo: fleet departs an RI harbor, transits the channel to open water, 
@@ -803,13 +845,12 @@ anything that already works.
 - **Key constraint:** Must output waypoints in the same format that `fleet_manager.py dispatch_command()` already consumes (list of `Waypoint(x, y)` in meters). No schema changes needed.
 - For return-to-base: `fleet_manager.py return_to_base()` currently sends vessels straight home. Must route through channel graph instead.
 
-**PHASE 3: Target / Contact Model** (Audit 4 scope — schemas + fleet_manager)
-- Add `INTERCEPT` to `MissionType` enum in `schemas.py` (ONLY schema change needed)
-- Add a `Contact` model: position, heading, speed, ID — represents the target to intercept
-- `fleet_manager.py` needs a `contacts` dict and a step-update for contact movement
-- Intercept logic: compute intercept point (lead angle based on target course/speed), generate waypoints to that point
-- Drone switches to TRACK pattern on the target
-- **This is Audit 4 territory.** Land avoidance and channel nav are prerequisites.
+**PHASE 3: Target / Contact Model** ✅ DONE (Audit 4)
+- `INTERCEPT` added to `MissionType`, `Contact` model added, `FleetState.contacts` field added
+- `fleet_manager.py` has contacts dict, spawn/remove, straight-line step update
+- Intercept is one-shot waypoint dispatch (no lead-angle computation yet — future enhancement)
+- Drone switches to TRACK pattern on target
+- API endpoints for contact CRUD at `/api/contacts`
 
 **PHASE 4: Land-Aware Return-to-Base** (modifies fleet_manager.py)
 - Current `return_to_base()` draws a straight line from current position to home
@@ -877,18 +918,17 @@ Phase 3 (intercept/target — Audit 4, independent of land)
 | 2 | **Audit 6: Timing & Trajectory** | DONE ✓ | Heading wrapping, speed scaling, yaw noise, acceptance circle, pure pursuit |
 | 3 | **Audit 7: LLM Command Quality** | DONE ✓ | Waypoint clamping, asset ID validation, expanded prompt, timeout, retry variation |
 | 4 | **Audit 2: Land Avoidance** | DONE ✓ | Cape Cod polygon, land_check.py, heading correction in fleet_manager |
-| 5 | **Audit 4: Mission Lifecycle** | HIGH — NEXT | Need intercept + target tracking + land-aware RTB for RI harbor goal |
-| 6 | **Audit 3: GPS Denied** | MEDIUM | Key differentiator but cosmetic until nav works |
-| 7 | **Audit 5: Dashboard Polish** | MEDIUM | Visual polish + coastline overlay after functionality works |
+| 5 | **Audit 4: Mission Lifecycle** | DONE ✓ | Intercept mission, Contact model, target simulation, API endpoints |
+| 6 | **Audit 3: GPS Denied** | HIGH — NEXT | Key differentiator — dead reckoning + drift accumulation |
+| 7 | **Audit 5: Dashboard Polish** | MEDIUM | Visual polish + contact markers + coastline overlay after functionality works |
 
-**Current state (4 of 7 audits complete):** Navigation is solid — vessels reach waypoints 
-via clean arcs, LLM commands are validated, and land avoidance prevents coastal grounding. 
-The remaining audits (4, 3, 5) build on this foundation.
+**Current state (5 of 7 audits complete):** Navigation is solid, LLM commands are validated, 
+land avoidance works, and intercept/contact tracking is operational. The remaining audits 
+(3, 5) build on this foundation.
 
-**Why Audit 4 is next:** It adds the intercept mission type, target/contact tracking, 
-and is the prerequisite for the RI harbor demo scenario (fleet departs harbor → intercepts 
-target → returns). See the "Rhode Island Harbor Navigation — Full Roadmap" section above 
-for the phased plan.
+**Why Audit 3 is next:** GPS-denied mode is currently cosmetic — noise is added to display 
+positions but navigation uses true state. Making dead reckoning actually affect navigation 
+is a key differentiator for the demo and doesn't depend on any unfinished work.
 
 ## CRITICAL PHYSICS PARAMETERS TO KNOW
 

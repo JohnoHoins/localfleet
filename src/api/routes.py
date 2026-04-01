@@ -14,8 +14,11 @@ from typing import Optional
 
 from fastapi import APIRouter, Query, Request, UploadFile, File
 
+from pydantic import BaseModel
+
 from src.schemas import (
     CommandRequest, CommandResponse, FleetState, GpsDeniedRequest,
+    Contact, DomainType,
 )
 from src.voice.whisper_local import transcribe_audio
 
@@ -83,6 +86,40 @@ def create_router() -> APIRouter:
         finally:
             if tmp_path and os.path.exists(tmp_path):
                 os.unlink(tmp_path)
+
+    # ------------------------------------------------------------------
+    # Contacts (simulated targets)
+    # ------------------------------------------------------------------
+
+    class SpawnContactRequest(BaseModel):
+        contact_id: str
+        x: float
+        y: float
+        heading: float        # radians, math convention
+        speed: float = 3.0    # m/s
+        domain: DomainType = DomainType.SURFACE
+
+    @router.get("/contacts")
+    async def get_contacts(request: Request):
+        """List active contacts."""
+        fm = request.app.state.commander.fleet_manager
+        return {"contacts": [c.model_dump() for c in fm.contacts.values()]}
+
+    @router.post("/contacts")
+    async def post_contact(req: SpawnContactRequest, request: Request):
+        """Spawn a simulated contact/target."""
+        fm = request.app.state.commander.fleet_manager
+        contact = fm.spawn_contact(
+            req.contact_id, req.x, req.y, req.heading, req.speed, req.domain,
+        )
+        return {"success": True, "contact": contact.model_dump()}
+
+    @router.delete("/contacts/{contact_id}")
+    async def delete_contact(contact_id: str, request: Request):
+        """Remove a contact by ID."""
+        fm = request.app.state.commander.fleet_manager
+        removed = fm.remove_contact(contact_id)
+        return {"success": removed, "contact_id": contact_id}
 
     @router.get("/logs")
     async def get_logs(

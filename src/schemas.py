@@ -26,12 +26,13 @@ class DomainType(str, Enum):
     AIR = "air"            # Drones — uses drone_dynamics.py
 
 class MissionType(str, Enum):
-    """The 5 mission types LocalFleet supports. No more."""
+    """Mission types LocalFleet supports."""
     PATROL = "patrol"
     SEARCH = "search"
     ESCORT = "escort"
     LOITER = "loiter"
     AERIAL_RECON = "aerial_recon"
+    INTERCEPT = "intercept"
 
 class FormationType(str, Enum):
     """How surface vessels arrange relative to each other."""
@@ -126,6 +127,16 @@ class AssetState(BaseModel):
     gps_mode: GpsMode = GpsMode.FULL
     position_accuracy: float = 1.0
 
+class Contact(BaseModel):
+    """A tracked target/contact in the operating area."""
+    contact_id: str
+    x: float
+    y: float
+    heading: float        # radians, math convention (0=East, CCW+)
+    speed: float          # m/s
+    domain: DomainType = DomainType.SURFACE
+
+
 class FleetState(BaseModel):
     """
     State of the entire fleet. Sent via WebSocket every tick (4Hz).
@@ -136,6 +147,7 @@ class FleetState(BaseModel):
     active_mission: Optional[MissionType] = None
     formation: FormationType = FormationType.INDEPENDENT
     gps_mode: GpsMode = GpsMode.FULL
+    contacts: List[Contact] = []
 
 
 # ============================================================
