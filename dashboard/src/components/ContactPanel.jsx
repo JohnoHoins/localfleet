@@ -1,6 +1,6 @@
 import { useState } from 'react'
 
-export default function ContactPanel({ contacts = [] }) {
+export default function ContactPanel({ contacts = [], interceptRecommended = false, recommendedTarget = null, threatAssessments = [] }) {
   const [id, setId] = useState('bogey-1')
   const [x, setX] = useState('2000')
   const [y, setY] = useState('1000')
@@ -32,6 +32,28 @@ export default function ContactPanel({ contacts = [] }) {
   async function handleRemove(contactId) {
     try {
       await fetch(`/api/contacts/${contactId}`, { method: 'DELETE' })
+    } catch { /* swallow */ }
+  }
+
+  async function handleIntercept() {
+    if (!recommendedTarget) return
+    const contact = contacts.find(c => c.contact_id === recommendedTarget)
+    if (!contact) return
+    try {
+      await fetch('/api/command-direct', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          mission_type: 'intercept',
+          assets: [
+            { asset_id: 'alpha', domain: 'surface', waypoints: [{ x: contact.x, y: contact.y }], speed: 8.0 },
+            { asset_id: 'bravo', domain: 'surface', waypoints: [{ x: contact.x, y: contact.y }], speed: 8.0 },
+            { asset_id: 'charlie', domain: 'surface', waypoints: [{ x: contact.x, y: contact.y }], speed: 8.0 },
+            { asset_id: 'eagle-1', domain: 'air', waypoints: [{ x: contact.x, y: contact.y }], speed: 15.0, altitude: 100.0, drone_pattern: 'track' },
+          ],
+          formation: 'echelon',
+        }),
+      })
     } catch { /* swallow */ }
   }
 
@@ -79,6 +101,15 @@ export default function ContactPanel({ contacts = [] }) {
       >
         {spawning ? 'SPAWNING...' : 'SPAWN CONTACT'}
       </button>
+
+      {interceptRecommended && recommendedTarget && (
+        <button
+          onClick={handleIntercept}
+          className="w-full mt-2 py-2 bg-red-700 hover:bg-red-600 text-white border border-red-500 rounded text-xs font-bold tracking-wider animate-pulse"
+        >
+          INTERCEPT {recommendedTarget.toUpperCase()}
+        </button>
+      )}
 
       {contacts.length > 0 && (
         <div className="mt-2 space-y-1">

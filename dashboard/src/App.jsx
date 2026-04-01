@@ -74,6 +74,7 @@ export default function App() {
             contacts={contacts}
             contactTrails={contactTrails.current}
             activeMission={fleetState?.active_mission || null}
+            threatAssessments={fleetState?.threat_assessments || []}
           />
         </div>
 
@@ -88,7 +89,12 @@ export default function App() {
             ))}
           </div>
 
-          <ContactPanel contacts={contacts} />
+          <ContactPanel
+            contacts={contacts}
+            interceptRecommended={fleetState?.intercept_recommended || false}
+            recommendedTarget={fleetState?.recommended_target || null}
+            threatAssessments={fleetState?.threat_assessments || []}
+          />
           <CommandPanel />
 
           <div className="flex gap-2">

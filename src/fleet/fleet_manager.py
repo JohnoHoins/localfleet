@@ -23,11 +23,13 @@ from src.navigation.land_check import land_repulsion_heading, is_on_land
 from src.utils.gps_denied import degrade_position, DeadReckoningState, dead_reckon_step, get_navigated_position
 from src.fleet.drone_coordinator import DroneCoordinator
 from src.fleet.formations import apply_formation
+from src.fleet.threat_detector import assess_threats, ThreatAssessment
 
 METERS_TO_NMI = 1.0 / 1852.0
 SAT_AMP = 20  # actuator saturation amplitude
 REPLAN_INTERVAL_STEPS = 40  # 10 seconds at 4Hz
 REPLAN_SHIFT_THRESHOLD = 100.0  # meters — only update if intercept drifted this much
+THREAT_CHECK_INTERVAL = 4  # Check threats every 4 steps (~1 second at 4Hz)
 
 
 def compute_intercept_point(fleet_x: float, fleet_y: float, fleet_speed: float,
@@ -96,6 +98,12 @@ class FleetManager:
         self.formation = FormationType.INDEPENDENT
         self.comms_lost_behavior: str = "return_to_base"
         self._replan_counter: int = 0
+
+        # Threat detection state
+        self.threat_assessments: List[ThreatAssessment] = []
+        self.intercept_recommended: bool = False
+        self.recommended_target: str | None = None
+        self._threat_check_counter: int = 0
 
     # ------------------------------------------------------------------
     # Contact (target) management
@@ -326,8 +334,51 @@ class FleetManager:
                 self._replan_counter = 0
                 self._replan_intercept()
 
+        # Threat detection — check every ~1 second
+        self._threat_check_counter += 1
+        if self._threat_check_counter >= THREAT_CHECK_INTERVAL:
+            self._threat_check_counter = 0
+            self._check_threats()
+
         # Drone
         self.drone.step(dt)
+
+    # ------------------------------------------------------------------
+    # Threat detection & auto-response
+    # ------------------------------------------------------------------
+    def _check_threats(self):
+        """Run threat assessment and auto-retask drone if needed."""
+        self.threat_assessments = assess_threats(self.vessels, self.contacts)
+
+        # Reset recommendation flags
+        self.intercept_recommended = False
+        self.recommended_target = None
+
+        # Don't auto-respond if fleet is actively executing an intercept
+        active_intercept = (
+            self.active_mission == MissionType.INTERCEPT
+            and any(v["status"] == AssetStatus.EXECUTING for v in self.vessels.values())
+        )
+
+        for ta in self.threat_assessments:
+            if ta.threat_level == "critical":
+                self.intercept_recommended = True
+                self.recommended_target = ta.contact_id
+
+            if ta.threat_level in ("warning", "critical") and not active_intercept:
+                # Auto-retask drone to TRACK if idle or not already tracking
+                if self.drone.status in (AssetStatus.IDLE,) or (
+                    self.drone.status == AssetStatus.EXECUTING
+                    and self.drone_coordinator._current_pattern != DronePattern.TRACK
+                ):
+                    contact = self.contacts.get(ta.contact_id)
+                    if contact:
+                        self.drone_coordinator.assign_pattern(
+                            DronePattern.TRACK,
+                            [Waypoint(x=contact.x, y=contact.y)],
+                            altitude=100.0,
+                        )
+                        self.drone.status = AssetStatus.EXECUTING
 
     # ------------------------------------------------------------------
     # State query
@@ -379,6 +430,29 @@ class FleetManager:
             gps_mode=self.gps_mode,
             contacts=list(self.contacts.values()),
         )
+
+    def get_fleet_state_dict(self) -> dict:
+        """Get fleet state as dict with threat assessment data injected."""
+        state = self.get_fleet_state()
+        data = state.model_dump()
+
+        # Inject threat assessment data
+        data["threat_assessments"] = [
+            {
+                "contact_id": ta.contact_id,
+                "distance": ta.distance,
+                "bearing_deg": (90 - math.degrees(ta.bearing)) % 360,
+                "closing_rate": ta.closing_rate,
+                "threat_level": ta.threat_level,
+                "recommended_action": ta.recommended_action,
+                "reason": ta.reason,
+            }
+            for ta in self.threat_assessments
+        ]
+        data["intercept_recommended"] = self.intercept_recommended
+        data["recommended_target"] = self.recommended_target
+
+        return data
 
     # ------------------------------------------------------------------
     # Return to base

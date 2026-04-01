@@ -28,6 +28,22 @@ export default function MissionLog({ fleetState }) {
           newEntries.push({ ts, msg: `${asset.asset_id.toUpperCase()} → ${asset.status.toUpperCase()}` })
         }
       }
+      // Threat level changes
+      const prevThreats = Object.fromEntries((prev.threat_assessments || []).map((t) => [t.contact_id, t]))
+      for (const ta of (fleetState.threat_assessments || [])) {
+        const pt = prevThreats[ta.contact_id]
+        if (pt && pt.threat_level !== ta.threat_level) {
+          if (ta.threat_level === 'warning' || ta.threat_level === 'critical') {
+            newEntries.push({ ts, msg: `THREAT: ${ta.contact_id.toUpperCase()} escalated to ${ta.threat_level.toUpperCase()}` })
+          }
+        } else if (!pt && (ta.threat_level === 'warning' || ta.threat_level === 'critical')) {
+          newEntries.push({ ts, msg: `THREAT: ${ta.contact_id.toUpperCase()} ${ta.threat_level.toUpperCase()} at ${(ta.distance / 1000).toFixed(1)}km` })
+        }
+      }
+      // Intercept recommendation
+      if (!prev.intercept_recommended && fleetState.intercept_recommended && fleetState.recommended_target) {
+        newEntries.push({ ts, msg: `AUTO: INTERCEPT recommended for ${fleetState.recommended_target.toUpperCase()}` })
+      }
     } else {
       newEntries.push({ ts, msg: `Fleet online — ${fleetState.assets.length} assets` })
     }

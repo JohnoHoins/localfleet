@@ -26,11 +26,12 @@ def create_ws_router() -> APIRouter:
         try:
             while True:
                 commander.step(DT)
-                state = commander.get_state()
-                await websocket.send_json(state.model_dump())
+                state_dict = commander.get_state_dict()
+                await websocket.send_json(state_dict)
 
                 tick_count += 1
                 if logger and tick_count % LOG_INTERVAL == 0:
+                    state = commander.get_state()
                     logger.log_state(state)
 
                 await asyncio.sleep(DT)

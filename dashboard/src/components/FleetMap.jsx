@@ -36,11 +36,19 @@ function createIcon(domain, heading, label) {
   })
 }
 
-function createContactIcon(heading, label) {
-  const color = '#ef4444'
+const THREAT_COLORS = {
+  none: '#6b7280',      // gray
+  detected: '#eab308',  // yellow
+  warning: '#f97316',   // orange
+  critical: '#ef4444',  // red
+}
+
+function createContactIcon(heading, label, threatLevel) {
+  const color = THREAT_COLORS[threatLevel] || '#ef4444'
+  const pulse = threatLevel === 'critical' ? 'animation:pulse 1s infinite;' : ''
   const shape = `<polygon points="16,2 4,28 28,28" fill="${color}" stroke="#fff" stroke-width="0.5" opacity="0.9"/>`
 
-  const html = `<div style="display:flex;flex-direction:column;align-items:center">
+  const html = `<div style="display:flex;flex-direction:column;align-items:center;${pulse}">
     <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32"
       style="transform:rotate(${heading}deg);filter:drop-shadow(0 0 3px ${color})">
       ${shape}
@@ -105,7 +113,7 @@ function createInterceptIcon() {
   return L.divIcon({ html, className: '', iconSize: [20, 20], iconAnchor: [10, 10] })
 }
 
-export default function FleetMap({ assets, trails = {}, contacts = [], contactTrails = {}, activeMission = null }) {
+export default function FleetMap({ assets, trails = {}, contacts = [], contactTrails = {}, activeMission = null, threatAssessments = [] }) {
   const center = useMemo(() => {
     if (!assets?.length) return [ORIGIN_LAT, ORIGIN_LNG]
     const avgX = assets.reduce((s, a) => s + a.x, 0) / assets.length
@@ -129,6 +137,25 @@ export default function FleetMap({ assets, trails = {}, contacts = [], contactTr
         positions={CAPE_COD_LATLNG}
         pathOptions={{ color: '#92400e', fillColor: '#92400e', fillOpacity: 0.15, weight: 1.5 }}
       />
+
+      {/* Threat detection range rings — only when contacts exist */}
+      {contacts.length > 0 && assets.length > 0 && (() => {
+        const surfaceAssets = assets.filter(a => a.domain === 'surface')
+        const src = surfaceAssets.length > 0 ? surfaceAssets : assets
+        const cX = src.reduce((s, a) => s + a.x, 0) / src.length
+        const cY = src.reduce((s, a) => s + a.y, 0) / src.length
+        const centroid = metersToLatLng(cX, cY)
+        return (
+          <>
+            <Circle center={centroid} radius={8000}
+              pathOptions={{ color: '#eab308', fillOpacity: 0, weight: 0.5, dashArray: '8 4', opacity: 0.3 }} />
+            <Circle center={centroid} radius={5000}
+              pathOptions={{ color: '#f97316', fillOpacity: 0, weight: 0.8, dashArray: '6 3', opacity: 0.4 }} />
+            <Circle center={centroid} radius={2000}
+              pathOptions={{ color: '#ef4444', fillOpacity: 0, weight: 1, dashArray: '4 2', opacity: 0.5 }} />
+          </>
+        )
+      })()}
 
       {/* Asset trail lines */}
       {assets.map((asset) => {
@@ -236,21 +263,28 @@ export default function FleetMap({ assets, trails = {}, contacts = [], contactTr
         )
       })}
 
-      {/* Contact markers */}
+      {/* Contact markers — color-coded by threat level */}
       {contacts.map((contact) => {
         const pos = metersToLatLng(contact.x, contact.y)
         const nautHdg = ((90 - contact.heading * 180 / Math.PI) % 360 + 360) % 360
+        const ta = threatAssessments.find(t => t.contact_id === contact.contact_id)
+        const threatLevel = ta?.threat_level || 'none'
         return (
           <Marker
             key={`contact-${contact.contact_id}`}
             position={pos}
-            icon={createContactIcon(nautHdg, contact.contact_id.toUpperCase())}
+            icon={createContactIcon(nautHdg, contact.contact_id.toUpperCase(), threatLevel)}
           >
             <Popup className="c2-popup">
               <div className="text-xs" style={{ color: '#0b0f19' }}>
-                <div className="font-bold text-sm text-red-600">{contact.contact_id.toUpperCase()}</div>
+                <div className="font-bold text-sm" style={{ color: THREAT_COLORS[threatLevel] || '#ef4444' }}>
+                  {contact.contact_id.toUpperCase()} — {threatLevel.toUpperCase()}
+                </div>
                 <div>CONTACT — {contact.domain?.toUpperCase() || 'SURFACE'}</div>
                 <div>SPD: {contact.speed.toFixed(1)} m/s HDG: {nautHdg.toFixed(0)}°</div>
+                {ta && <div>RANGE: {(ta.distance / 1000).toFixed(1)}km BRG: {ta.bearing_deg.toFixed(0)}°</div>}
+                {ta && <div>CLOSING: {ta.closing_rate.toFixed(1)} m/s</div>}
+                {ta && <div>ACTION: {ta.recommended_action.toUpperCase()}</div>}
               </div>
             </Popup>
           </Marker>

@@ -4,7 +4,7 @@ Read CLAUDE.md first. Then read docs/localfleet_audit_plan.md — focus on AUDIT
 (Autonomous Threat Response — Auto-Detect and Propose).
 
 COMPLETED AUDITS: Audits 1-8 complete. Predictive intercept working.
-147+ tests passing. Do NOT break them.
+152 backend tests passing. Do NOT break them.
 
 YOUR TASK: Build a threat detection engine that evaluates contacts by range
 and closing rate. When a contact enters warning range (5km), auto-retask the

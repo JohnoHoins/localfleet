@@ -7,6 +7,9 @@ export default function MissionStatus({ fleetState, contacts = [] }) {
   const gpsMode = fleetState.gps_mode || 'full'
   const mission = fleetState.active_mission
   const formation = fleetState.formation
+  const threats = fleetState.threat_assessments || []
+  const interceptRecommended = fleetState.intercept_recommended || false
+  const recommendedTarget = fleetState.recommended_target || null
 
   // Asset status counts
   const counts = {}
@@ -62,6 +65,19 @@ export default function MissionStatus({ fleetState, contacts = [] }) {
       {targetInfo && (
         <div className="mt-1 text-xs text-red-400 font-bold">
           TARGET: {targetInfo.id.toUpperCase()} — {targetInfo.dist} @ {targetInfo.bearing}°
+        </div>
+      )}
+
+      {/* Threat alerts */}
+      {threats.filter(t => t.threat_level === 'warning' || t.threat_level === 'critical').map((t) => (
+        <div key={t.contact_id} className={`mt-1 text-xs font-bold ${t.threat_level === 'critical' ? 'text-red-400' : 'text-orange-400'}`}>
+          THREAT: {t.contact_id.toUpperCase()} — {(t.distance / 1000).toFixed(1)}km @ {t.bearing_deg.toFixed(0)}° CLOSING {Math.abs(t.closing_rate).toFixed(1)} m/s
+        </div>
+      ))}
+
+      {interceptRecommended && (
+        <div className="mt-1.5 text-xs font-bold text-red-400 animate-pulse">
+          INTERCEPT RECOMMENDED — {recommendedTarget?.toUpperCase()}
         </div>
       )}
     </div>

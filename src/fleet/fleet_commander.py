@@ -156,3 +156,7 @@ class FleetCommander:
     def get_state(self):
         """Get current fleet state."""
         return self.fleet_manager.get_fleet_state()
+
+    def get_state_dict(self) -> dict:
+        """Get fleet state as dict with threat data included."""
+        return self.fleet_manager.get_fleet_state_dict()
