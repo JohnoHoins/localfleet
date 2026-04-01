@@ -14,7 +14,7 @@ from src.schemas import (
 def _fake_command():
     """A canned FleetCommand for mocked tests."""
     return FleetCommand(
-        mission_type=MissionType.PATROL,
+        mission_type=MissionType.ESCORT,
         assets=[
             AssetCommand(
                 asset_id="alpha",
@@ -32,7 +32,7 @@ def _fake_command():
             ),
         ],
         formation=FormationType.ECHELON,
-        raw_text="patrol harbor with alpha, eagle sweep",
+        raw_text="escort area with alpha, eagle sweep",
     )
 
 
@@ -45,7 +45,7 @@ def test_handle_command_success(mock_parse):
 
     assert resp.success is True
     assert resp.fleet_command is not None
-    assert resp.fleet_command.mission_type == MissionType.PATROL
+    assert resp.fleet_command.mission_type == MissionType.ESCORT
     assert resp.llm_response_time_ms >= 0
     assert fc.last_command is not None
     mock_parse.assert_called_once_with("patrol harbor with alpha")

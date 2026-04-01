@@ -119,6 +119,9 @@ class FleetManager:
         self.autonomous_actions: list[str] = []
         AUTONOMOUS_ESCALATION_DELAY = 60.0  # seconds before auto-engage
 
+        # Escort tracking
+        self._escort_target_id: str | None = None
+
         # Decision audit trail
         self.decision_log = DecisionLog()
 
@@ -205,6 +208,48 @@ class FleetManager:
                 vessel_ids, cmd.formation, cmd.spacing_meters,
             )
 
+        # --- Mission-specific waypoint generation ---
+        if cmd.mission_type == MissionType.SEARCH:
+            # Generate zigzag pattern from center waypoint
+            for ac in cmd.assets:
+                if ac.domain == DomainType.SURFACE and ac.waypoints:
+                    center = ac.waypoints[0]
+                    idx = [a.asset_id for a in cmd.assets
+                           if a.domain == DomainType.SURFACE].index(ac.asset_id)
+                    ac.waypoints = self._generate_search_pattern(
+                        center.x, center.y,
+                        lateral_offset=idx * cmd.spacing_meters
+                    )
+
+        if cmd.mission_type == MissionType.ESCORT and self.contacts:
+            # Store closest contact as escort target
+            surface_xs = [self.vessels[ac.asset_id]["state"][0]
+                          for ac in cmd.assets
+                          if ac.domain == DomainType.SURFACE and ac.asset_id in self.vessels]
+            surface_ys = [self.vessels[ac.asset_id]["state"][1]
+                          for ac in cmd.assets
+                          if ac.domain == DomainType.SURFACE and ac.asset_id in self.vessels]
+            if surface_xs:
+                cx, cy = np.mean(surface_xs), np.mean(surface_ys)
+                closest = min(self.contacts.values(),
+                              key=lambda c: (c.x - cx)**2 + (c.y - cy)**2)
+                self._escort_target_id = closest.contact_id
+
+        if cmd.mission_type == MissionType.AERIAL_RECON:
+            # Drone gets wide SWEEP, surface vessels get holding position
+            for ac in cmd.assets:
+                if ac.domain == DomainType.AIR and ac.waypoints:
+                    center = ac.waypoints[0] if ac.waypoints else Waypoint(x=1000, y=1000)
+                    sw = Waypoint(x=center.x - 500, y=center.y - 500)
+                    ne = Waypoint(x=center.x + 500, y=center.y + 500)
+                    ac.waypoints = [sw, ne]
+                    ac.drone_pattern = DronePattern.SWEEP
+                    ac.altitude = 150.0
+                elif ac.domain == DomainType.SURFACE and ac.waypoints:
+                    # Surface holds 500m south of recon area
+                    center = ac.waypoints[0]
+                    ac.waypoints = [Waypoint(x=center.x, y=center.y - 500)]
+
         for ac in cmd.assets:
             if ac.domain == DomainType.SURFACE and ac.asset_id in self.vessels:
                 v = self.vessels[ac.asset_id]
@@ -229,6 +274,7 @@ class FleetManager:
                 v["i_wpt"] = 1 if len(adjusted_wps) > 0 else 0
                 v["desired_speed"] = ac.speed
                 v["status"] = AssetStatus.EXECUTING if adjusted_wps else AssetStatus.IDLE
+                v["_loiter_orbit"] = False  # reset on new command
 
             elif ac.domain == DomainType.AIR and ac.asset_id == self.drone.asset_id:
                 # Use DroneCoordinator for pattern-based commands when
@@ -247,6 +293,42 @@ class FleetManager:
                     self.drone.set_waypoints(ac.waypoints, ac.drone_pattern)
                     if ac.altitude is not None:
                         self.drone.target_altitude = ac.altitude
+
+        # Drone patterns for non-intercept missions
+        if cmd.mission_type == MissionType.PATROL:
+            wps = [ac.waypoints for ac in cmd.assets
+                   if ac.domain == DomainType.SURFACE and ac.waypoints]
+            if wps:
+                all_wps = wps[0]
+                cx = sum(w.x for w in all_wps) / len(all_wps)
+                cy = sum(w.y for w in all_wps) / len(all_wps)
+                self.drone_coordinator.assign_pattern(
+                    DronePattern.ORBIT, [Waypoint(x=cx, y=cy)], altitude=100.0)
+
+        if cmd.mission_type == MissionType.LOITER:
+            wps = [ac.waypoints[-1] for ac in cmd.assets
+                   if ac.domain == DomainType.SURFACE and ac.waypoints]
+            if wps:
+                self.drone_coordinator.assign_pattern(
+                    DronePattern.ORBIT, [wps[0]], altitude=100.0)
+
+    def _generate_search_pattern(self, center_x: float, center_y: float,
+                                  width: float = 500.0, height: float = 500.0,
+                                  legs: int = 6,
+                                  lateral_offset: float = 0.0) -> list[Waypoint]:
+        """Generate zigzag lawnmower search waypoints."""
+        wps = []
+        leg_spacing = height / legs
+        half_w = width / 2
+        for i in range(legs):
+            y = center_y - height / 2 + i * leg_spacing
+            if i % 2 == 0:
+                wps.append(Waypoint(x=center_x - half_w + lateral_offset, y=y))
+                wps.append(Waypoint(x=center_x + half_w + lateral_offset, y=y))
+            else:
+                wps.append(Waypoint(x=center_x + half_w + lateral_offset, y=y))
+                wps.append(Waypoint(x=center_x - half_w + lateral_offset, y=y))
+        return wps
 
     # ------------------------------------------------------------------
     # Intercept replanning
@@ -302,10 +384,31 @@ class FleetManager:
                 wpts_x[-1] = pred_x * METERS_TO_NMI
                 wpts_y[-1] = pred_y * METERS_TO_NMI
 
+    def _update_escort_positions(self):
+        """Update waypoints to follow escort target contact."""
+        if self.active_mission != MissionType.ESCORT:
+            return
+        if not self._escort_target_id or self._escort_target_id not in self.contacts:
+            return
+        contact = self.contacts[self._escort_target_id]
+        for vid, v in self.vessels.items():
+            if v["status"] != AssetStatus.EXECUTING:
+                continue
+            wpts_x = v["waypoints_x"]
+            wpts_y = v["waypoints_y"]
+            if len(wpts_x) >= 2:
+                wpts_x[-1] = contact.x * METERS_TO_NMI
+                wpts_y[-1] = contact.y * METERS_TO_NMI
+
     # ------------------------------------------------------------------
     # Simulation step
     # ------------------------------------------------------------------
     def step(self, dt: float):
+        # Escort tracking — update every threat check interval
+        if (self.active_mission == MissionType.ESCORT
+                and self._threat_check_counter == 0):
+            self._update_escort_positions()
+
         # Surface vessels
         for vid, v in self.vessels.items():
             state = v["state"]
@@ -332,12 +435,42 @@ class FleetManager:
 
                 # Check if we've passed the last waypoint
                 if i_wpt >= len(wpts_x):
-                    v["status"] = AssetStatus.IDLE
-                    v["i_wpt"] = len(wpts_x) - 1
-                    inputs = [0.0, 0.0]
-                    x_dot = vessel_dynamics(state, inputs)
-                    v["state"] = integration(state, x_dot, dt)
-                    continue
+                    # Mission-specific behavior at last waypoint
+                    if self.active_mission in (MissionType.PATROL, MissionType.SEARCH):
+                        # Loop back to first real waypoint
+                        v["i_wpt"] = 1
+                        i_wpt = 1
+                        # Fall through to navigation below
+                    elif self.active_mission == MissionType.LOITER:
+                        if not v.get("_loiter_orbit"):
+                            # Generate orbit waypoints around loiter point
+                            lx = wpts_x[-1] / METERS_TO_NMI
+                            ly = wpts_y[-1] / METERS_TO_NMI
+                            orbit_x = [v["state"][0] * METERS_TO_NMI]
+                            orbit_y = [v["state"][1] * METERS_TO_NMI]
+                            for j in range(8):
+                                angle = j * (2 * math.pi / 8)
+                                orbit_x.append((lx + 150 * math.cos(angle)) * METERS_TO_NMI)
+                                orbit_y.append((ly + 150 * math.sin(angle)) * METERS_TO_NMI)
+                            v["waypoints_x"] = orbit_x
+                            v["waypoints_y"] = orbit_y
+                            v["i_wpt"] = 1
+                            v["_loiter_orbit"] = True
+                            i_wpt = 1
+                            wpts_x = orbit_x
+                            wpts_y = orbit_y
+                        else:
+                            # Already orbiting — loop
+                            v["i_wpt"] = 1
+                            i_wpt = 1
+                    else:
+                        # Default: go IDLE
+                        v["status"] = AssetStatus.IDLE
+                        v["i_wpt"] = len(wpts_x) - 1
+                        inputs = [0.0, 0.0]
+                        x_dot = vessel_dynamics(state, inputs)
+                        v["state"] = integration(state, x_dot, dt)
+                        continue
 
                 psi_desired = planning(wpts_x, wpts_y, x_nmi, y_nmi, i_wpt)
                 if psi_desired is None:

@@ -55,10 +55,9 @@ def test_dispatch_multi_domain_command():
     assert v_alpha["desired_speed"] == 5.0
     assert v_alpha["status"] == AssetStatus.EXECUTING
 
-    # Drone got waypoint
+    # Drone got waypoints (PATROL assigns ORBIT pattern via coordinator)
     assert fm.drone.status == AssetStatus.EXECUTING
-    assert len(fm.drone.waypoints) == 1
-    assert fm.drone.target_altitude == 150.0
+    assert len(fm.drone.waypoints) >= 1
 
     # Mission tracking
     assert fm.active_mission == MissionType.PATROL
@@ -140,7 +139,7 @@ def test_vessel_reaches_waypoint_and_goes_idle():
     """Vessel should reach a waypoint 1000m away and stop (not circle forever)."""
     fm = FleetManager()
     cmd = FleetCommand(
-        mission_type=MissionType.PATROL,
+        mission_type=MissionType.ESCORT,
         assets=[
             AssetCommand(
                 asset_id="alpha",
@@ -249,7 +248,7 @@ def test_vessel_straight_line_accuracy():
     fm = FleetManager()
     # Alpha starts at (0,0) heading East, waypoint at (1000, 0)
     cmd = FleetCommand(
-        mission_type=MissionType.PATROL,
+        mission_type=MissionType.ESCORT,
         assets=[
             AssetCommand(
                 asset_id="alpha",

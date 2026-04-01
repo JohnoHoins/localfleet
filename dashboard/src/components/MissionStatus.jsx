@@ -1,5 +1,14 @@
 const GPS_COLORS = { full: '#22c55e', degraded: '#f59e0b', denied: '#ef4444' }
 
+const MISSION_COLORS = {
+  patrol: '#22c55e',     // green
+  search: '#3b82f6',     // blue
+  escort: '#06b6d4',     // cyan
+  loiter: '#f59e0b',     // amber
+  aerial_recon: '#a855f7', // purple
+  intercept: '#ef4444',  // red
+}
+
 const KILL_CHAIN_COLORS = {
   DETECT: '#eab308',   // yellow
   TRACK: '#f59e0b',    // amber
@@ -57,7 +66,7 @@ export default function MissionStatus({ fleetState, contacts = [] }) {
     <div className="border border-slate-700 rounded p-3 bg-slate-900/50">
       <div className="flex items-center justify-between mb-1">
         <div className="flex items-center gap-2">
-          <span className="text-xs font-bold tracking-wider text-slate-300">
+          <span className="text-xs font-bold tracking-wider" style={{ color: mission ? (MISSION_COLORS[mission] || '#cbd5e1') : '#cbd5e1' }}>
             {mission ? mission.toUpperCase() : 'STANDBY'}
           </span>
           {formation && (
