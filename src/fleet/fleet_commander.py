@@ -3,17 +3,80 @@ FleetCommander — Bridges natural language to FleetManager.
 Takes text input, calls the local LLM to produce a FleetCommand,
 dispatches it to the FleetManager, and returns a CommandResponse.
 """
+import logging
 import time
 from typing import TYPE_CHECKING
 
 from src.schemas import (
     FleetCommand, CommandRequest, CommandResponse, GpsMode, GpsDeniedRequest,
+    DomainType,
 )
 from src.llm.ollama_client import parse_fleet_command
 from src.fleet.fleet_manager import FleetManager
 
 if TYPE_CHECKING:
     from src.logging.mission_logger import MissionLogger
+
+logger = logging.getLogger(__name__)
+
+# Validation constants
+VALID_ASSET_IDS = {"alpha", "bravo", "charlie", "eagle-1"}
+MAX_RANGE = 5000  # meters — operating area bounds
+MIN_SURFACE_SPEED = 1.0
+MAX_SURFACE_SPEED = 10.0
+MIN_AIR_SPEED = 5.0
+MAX_AIR_SPEED = 25.0
+MIN_ALTITUDE = 10.0
+MAX_ALTITUDE = 500.0
+
+
+def validate_command(command: FleetCommand) -> list[str]:
+    """Validate and sanitize a parsed FleetCommand. Returns list of warnings."""
+    warnings = []
+
+    # Filter out invalid asset IDs
+    valid_assets = []
+    for ac in command.assets:
+        if ac.asset_id not in VALID_ASSET_IDS:
+            warnings.append(f"Unknown asset_id '{ac.asset_id}' removed")
+            continue
+        valid_assets.append(ac)
+    command.assets = valid_assets
+
+    for ac in command.assets:
+        # Clamp waypoints to operating area
+        for wp in ac.waypoints:
+            clamped_x = max(-MAX_RANGE, min(MAX_RANGE, wp.x))
+            clamped_y = max(-MAX_RANGE, min(MAX_RANGE, wp.y))
+            if clamped_x != wp.x or clamped_y != wp.y:
+                warnings.append(
+                    f"{ac.asset_id}: waypoint ({wp.x}, {wp.y}) clamped to ({clamped_x}, {clamped_y})"
+                )
+                wp.x = clamped_x
+                wp.y = clamped_y
+
+        # Clamp speed based on domain
+        if ac.domain == DomainType.SURFACE:
+            original = ac.speed
+            ac.speed = max(MIN_SURFACE_SPEED, min(MAX_SURFACE_SPEED, ac.speed))
+            if ac.speed != original:
+                warnings.append(f"{ac.asset_id}: speed clamped {original} → {ac.speed}")
+        elif ac.domain == DomainType.AIR:
+            original = ac.speed
+            ac.speed = max(MIN_AIR_SPEED, min(MAX_AIR_SPEED, ac.speed))
+            if ac.speed != original:
+                warnings.append(f"{ac.asset_id}: speed clamped {original} → {ac.speed}")
+
+            # Clamp altitude for air assets
+            if ac.altitude is not None:
+                original = ac.altitude
+                ac.altitude = max(MIN_ALTITUDE, min(MAX_ALTITUDE, ac.altitude))
+                if ac.altitude != original:
+                    warnings.append(
+                        f"{ac.asset_id}: altitude clamped {original} → {ac.altitude}"
+                    )
+
+    return warnings
 
 
 class FleetCommander:
@@ -33,16 +96,36 @@ class FleetCommander:
             command = parse_fleet_command(request.text)
             elapsed_ms = (time.time() - t0) * 1000.0
 
+            # Validate and sanitize the parsed command
+            warnings = validate_command(command)
+            for w in warnings:
+                logger.warning("Command validation: %s", w)
+
+            if not command.assets:
+                return CommandResponse(
+                    success=False,
+                    error="No valid assets in command after validation",
+                    llm_response_time_ms=elapsed_ms,
+                )
+
             self.fleet_manager.dispatch_command(command)
             self.last_command = command
 
             if self.logger:
                 self.logger.log_command(command)
 
+            # Build dispatch summary
+            activated = [ac.asset_id for ac in command.assets]
+            summary_parts = [f"Activated: {', '.join(activated)}"]
+            if warnings:
+                summary_parts.append(f"Warnings: {'; '.join(warnings)}")
+            summary = ". ".join(summary_parts)
+
             return CommandResponse(
                 success=True,
                 fleet_command=command,
                 llm_response_time_ms=elapsed_ms,
+                error=summary if warnings else None,
             )
         except Exception as e:
             elapsed_ms = (time.time() - t0) * 1000.0
