@@ -20,7 +20,7 @@ from src.dynamics.drone_dynamics import DroneAgent
 from src.core.integration import integration
 from src.navigation.planning import waypoint_selection, planning
 from src.navigation.land_check import land_repulsion_heading, is_on_land
-from src.utils.gps_denied import degrade_position
+from src.utils.gps_denied import degrade_position, DeadReckoningState, dead_reckon_step, get_navigated_position
 from src.fleet.drone_coordinator import DroneCoordinator
 from src.fleet.formations import apply_formation
 
@@ -64,6 +64,11 @@ class FleetManager:
         # GPS mode
         self.gps_mode = GpsMode.FULL
         self.noise_meters = 25.0
+
+        # Dead reckoning states (per surface vessel, used in DENIED mode)
+        self.dr_states: Dict[str, DeadReckoningState] = {}
+        for vid, x0, y0 in vessel_configs:
+            self.dr_states[vid] = DeadReckoningState(estimated_x=x0, estimated_y=y0)
 
         # Mission tracking
         self.active_mission: MissionType | None = None
@@ -164,8 +169,18 @@ class FleetManager:
         # Surface vessels
         for vid, v in self.vessels.items():
             state = v["state"]
-            x_nmi = state[0] * METERS_TO_NMI
-            y_nmi = state[1] * METERS_TO_NMI
+
+            # Get navigated position (may differ from true if GPS denied/degraded)
+            nav_x, nav_y = state[0], state[1]
+            if self.gps_mode == GpsMode.DENIED:
+                dr = self.dr_states[vid]
+                dead_reckon_step(dr, state[5], state[2], dt)
+                nav_x, nav_y = dr.estimated_x, dr.estimated_y
+            elif self.gps_mode == GpsMode.DEGRADED:
+                nav_x, nav_y, _ = degrade_position(state[0], state[1], self.noise_meters)
+
+            x_nmi = nav_x * METERS_TO_NMI
+            y_nmi = nav_y * METERS_TO_NMI
 
             wpts_x = v["waypoints_x"]
             wpts_y = v["waypoints_y"]
@@ -232,7 +247,11 @@ class FleetManager:
             x, y = float(s[0]), float(s[1])
             accuracy = 1.0
 
-            if self.gps_mode == GpsMode.DEGRADED:
+            if self.gps_mode == GpsMode.DENIED:
+                dr = self.dr_states[vid]
+                x, y = dr.estimated_x, dr.estimated_y
+                accuracy = dr.drift_error
+            elif self.gps_mode == GpsMode.DEGRADED:
                 x, y, accuracy = degrade_position(x, y, self.noise_meters)
 
             assets.append(AssetState(
@@ -309,5 +328,19 @@ class FleetManager:
     # GPS mode control
     # ------------------------------------------------------------------
     def set_gps_mode(self, mode: GpsMode, noise_meters: float = 25.0):
+        if mode == GpsMode.DENIED and self.gps_mode != GpsMode.DENIED:
+            # Initialize DR states from current true positions
+            for vid, v in self.vessels.items():
+                s = v["state"]
+                self.dr_states[vid] = DeadReckoningState(
+                    estimated_x=float(s[0]), estimated_y=float(s[1]),
+                )
+        elif mode != GpsMode.DENIED and self.gps_mode == GpsMode.DENIED:
+            # Leaving DENIED mode — reset DR states
+            for vid, v in self.vessels.items():
+                s = v["state"]
+                self.dr_states[vid] = DeadReckoningState(
+                    estimated_x=float(s[0]), estimated_y=float(s[1]),
+                )
         self.gps_mode = mode
         self.noise_meters = noise_meters

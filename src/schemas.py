@@ -61,6 +61,7 @@ class GpsMode(str, Enum):
     """GPS availability state."""
     FULL = "full"
     DEGRADED = "degraded"
+    DENIED = "denied"
 
 
 # ============================================================
