@@ -280,67 +280,211 @@ DELIVERABLES:
 
 ---
 
-## AUDIT 5: Dashboard & Demo Readiness
-**Goal**: Make the dashboard demo-video ready.
+## AUDIT 5: Dashboard — Functional C2 Operations Center
+**Goal**: Make the dashboard a functional command-and-control interface. Every backend 
+capability (intercept, contacts, GPS denied, RTB) must be operable from the dashboard 
+without CLI commands. Information density over aesthetics.
 
 ```
-AUDIT TASK: Polish the dashboard for a compelling demo video.
+AUDIT TASK: Build a functional C2 dashboard that exposes every backend capability.
 
-CONTEXT: The dashboard is a React/Vite app using Leaflet for the map, 
-connecting via WebSocket to the FastAPI backend. It currently shows vessel 
-markers, trails, GPS status, and has a command panel + voice input.
+DESIGN PRINCIPLE: An operator who has never seen the codebase should be able to:
+spawn a target, order an intercept, watch the fleet converge, hit RTB, toggle GPS 
+denied mid-mission, and understand what's happening the entire time — without typing 
+a single CLI command or reading any code.
 
-CURRENT COMPONENTS:
-- `FleetMap.jsx` — Leaflet map with vessel/drone markers, trails, GPS rings
-- `AssetCard.jsx` — Status cards per asset (domain, speed, heading, GPS, etc.)
-- `CommandPanel.jsx` — Text input + voice button for NL commands
-- `GpsDeniedToggle.jsx` — Toggle for GPS degradation mode
-- `MissionLog.jsx` — Event log showing status changes
-- `App.jsx` — Layout: 70% map / 30% sidebar
+CURRENT STATE — WHAT EXISTS:
+- FleetMap.jsx — Leaflet map with vessel/drone markers, trails, GPS uncertainty rings
+- AssetCard.jsx — Status cards per asset (domain, speed, heading, GPS mode, risk)
+- CommandPanel.jsx — Text input + voice button → POST /api/command → LLM parse
+- GpsDeniedToggle.jsx — Toggles FULL ↔ DEGRADED only (DENIED not supported yet)
+- MissionLog.jsx — Event log showing status/mission/GPS changes
+- App.jsx — 70/30 split layout, WebSocket hook, trail accumulation
+- VoiceButton.jsx — Web Audio API recording, 16kHz WAV, POST /api/voice-command
+- useWebSocket.js — Connects to ws://host/ws, streams FleetState at 4Hz
 
-ISSUES TO FIX FOR DEMO:
+CURRENT STATE — WHAT THE BACKEND STREAMS (FleetState at 4Hz):
+  {
+    timestamp, assets: [AssetState], active_mission, formation, gps_mode,
+    contacts: [Contact]  ← ADDED IN AUDIT 4, DASHBOARD IGNORES IT
+  }
+  AssetState: { asset_id, domain, x, y, heading, speed, altitude, status,
+    mission_type, current_waypoint_index, total_waypoints, risk_level,
+    cpa, tcpa, drone_pattern, gps_mode, position_accuracy }
+  Contact: { contact_id, x, y, heading, speed, domain }
 
-A) **Map Tiles**: Using OpenStreetMap standard tiles with a CSS dark filter 
-   (`brightness(0.6) invert(1) contrast(3) hue-rotate(200deg)`). This works 
-   but land/water distinction is poor after the filter. Consider:
-   - Using CartoDB dark_all or Stamen toner tiles (natively dark)
-   - Or adjusting the filter to better show coastlines
+EXISTING API ENDPOINTS (backend already supports all of these):
+  POST /api/command         — NL text → LLM → FleetCommand dispatch
+  POST /api/voice-command   — audio → Whisper → LLM → FleetCommand dispatch
+  POST /api/return-to-base  — recall all assets to home positions
+  POST /api/gps-mode        — set GPS mode {mode, noise_meters, update_rate_hz}
+  GET  /api/contacts        — list active contacts
+  POST /api/contacts        — spawn contact {contact_id, x, y, heading, speed, domain}
+  DELETE /api/contacts/{id} — remove contact
+  GET  /api/assets          — current FleetState (REST fallback)
+  GET  /api/mission         — active mission info + last command
 
-B) **Missing Components** from screenshot: The original project had 
-   `MissionStatus.jsx`, `HeaderBar.jsx`, `ScenarioButton.jsx`, `RTBButton.jsx` 
-   in the dashboard/src/components/ directory but they're NOT imported in App.jsx.
-   - `RTBButton.jsx` — Return to Base button. MUST be visible for the demo.
-   - `ScenarioButton.jsx` — Pre-built scenario launcher. Useful for demo.
-   - Check if these components exist and wire them into App.jsx.
+────────────────────────────────────────────────────────────────────
+WHAT MUST BE BUILT — PRIORITY ORDER
+────────────────────────────────────────────────────────────────────
 
-C) **No Target/Contact Display**: If we add intercept capability (Audit 4), 
-   the map needs to show the target entity with a distinct marker (red?).
+A) CONTACT MARKERS ON MAP (FleetMap.jsx) — CRITICAL
+   fleetState.contacts[] streams at 4Hz but the map doesn't render them.
+   - Red triangle markers for contacts, distinct from blue vessel markers
+   - Rotate by heading (same as vessel markers)
+   - Popup showing: contact_id, speed, heading, domain
+   - Contact trail lines (red, dashed) — same trail system as vessels
+   - FleetMap needs a new `contacts` prop from App.jsx
 
-D) **Formation Visualization**: No visual indication of formation type. 
-   Add dashed lines between vessels when in formation, or a formation label.
+B) RTB BUTTON (new: RTBButton.jsx → wire into App.jsx sidebar)
+   - POST /api/return-to-base on click
+   - Confirm dialog or hold-to-activate (it's a fleet-wide command)
+   - Show "RETURNING" state while active
+   - Place prominently in sidebar — this is an emergency control
 
-E) **Mission Status Display**: The `active_mission` from FleetState is available 
-   but may not be prominently displayed. Add a banner showing current mission 
-   type and status.
+C) CONTACT SPAWN PANEL (new: ContactPanel.jsx → wire into App.jsx sidebar)
+   - Input fields: contact_id (default: "bogey-1"), x, y, heading (degrees for
+     UI, convert to radians for API), speed (default 3.0 m/s)
+   - "SPAWN" button → POST /api/contacts
+   - List of active contacts with "REMOVE" button each → DELETE /api/contacts/{id}
+   - Keep it compact — this is a demo setup tool, not the main interface
 
-F) **GPS Denied Visual**: The uncertainty ring exists but the toggle might not 
-   cycle through all modes (if we add DENIED). Update the toggle to support 
-   FULL → DEGRADED → DENIED.
+D) 3-STATE GPS TOGGLE (modify GpsDeniedToggle.jsx)
+   - Current: toggles FULL ↔ DEGRADED
+   - Need: cycle FULL → DEGRADED → DENIED → FULL
+   - Show current mode with color: FULL=green, DEGRADED=amber, DENIED=red
+   - When DENIED: show accumulated drift error from position_accuracy field
+   - POST /api/gps-mode with {mode: "full"/"degraded"/"denied"}
 
-G) **Trail Persistence**: Trails reset if the page reloads. For a demo video 
-   this is fine, but trails should be more visible — increase opacity or width.
+E) MISSION STATUS BAR (new: MissionStatus.jsx → wire into App.jsx)
+   - Horizontal bar at top of sidebar or above map showing:
+     - Active mission type (PATROL, INTERCEPT, etc.) or "NO ACTIVE MISSION"
+     - Formation type
+     - Asset status summary: "3 EXECUTING / 1 IDLE" (count from assets array)
+     - GPS mode indicator with color
+   - Compact single-line or two-line display — not a full panel
 
-H) **Responsive Layout**: The 70/30 split may not work well at all screen sizes. 
-   For the demo video, optimize for a specific resolution (1920x1080 or 2560x1440).
+F) FLEET-TO-CONTACT TACTICAL INFO (FleetMap.jsx or AssetCard.jsx)
+   - When contacts exist, compute and display:
+     - Distance from each vessel to nearest contact (client-side math)
+     - Bearing from fleet centroid to contact
+   - Show as a line on the map from fleet leader to contact (thin, dotted, white/gray)
+   - Or show in the MissionStatus bar: "TARGET: bogey-1 — 1.2km @ 045°"
+   - This is client-side computation: sqrt((cx-vx)² + (cy-vy)²) for distance,
+     atan2(cy-vy, cx-vx) converted to nautical degrees for bearing
 
-DELIVERABLES:
-1. Switch to better dark map tiles (CartoDB dark_all)
-2. Wire in RTBButton and ScenarioButton components
-3. Add target marker for intercept missions
-4. Add formation lines between vessels
-5. Add prominent mission status banner
-6. Verify all WebSocket data is rendering correctly
-7. List any remaining visual bugs
+G) COASTLINE OVERLAY (FleetMap.jsx) — NICE TO HAVE
+   The Cape Cod polygon vertices exist in src/navigation/land_check.py as 
+   CAPE_COD_POLYGON_LATLNG (list of [lat, lng] pairs). Options:
+   - Hardcode the polygon coordinates in FleetMap.jsx (simplest — copy the vertices)
+   - Or add a GET /api/coastline endpoint that returns polygon data
+   - Render as a semi-transparent red/brown Leaflet polygon overlay
+   - This gives the operator visual context for where land avoidance activates
+
+H) SCENARIO PRESETS (new: ScenarioPanel.jsx → wire into App.jsx sidebar)
+   Pre-built one-click scenarios that chain existing API calls:
+   - "INTERCEPT DEMO": spawn contact at (2000, 1000) heading west at 3 m/s,
+     then POST /api/command with "All assets intercept contact at 2000 1000 in echelon"
+   - "PATROL DEMO": POST /api/command with "All vessels patrol to 1500 800 in column"
+   - "GPS DENIED DEMO": start patrol, wait 5s, toggle to DENIED
+   - Each preset is just a sequence of fetch() calls to existing endpoints
+   - 2-3 presets max. Keep it simple.
+
+────────────────────────────────────────────────────────────────────
+WHAT NOT TO BUILD
+────────────────────────────────────────────────────────────────────
+
+- Formation lines between vessels (theatrical — formations applied at dispatch only)
+- Responsive layout optimization (single machine, known resolution)
+- Trail persistence across page reloads (not needed)
+- Click-on-map waypoint editing (future feature)
+- Real-time intercept ETA calculation (future feature)
+- Any backend changes beyond maybe one small coastline API endpoint
+
+────────────────────────────────────────────────────────────────────
+TECHNICAL DETAILS
+────────────────────────────────────────────────────────────────────
+
+COORDINATE CONVERSION (already in FleetMap.jsx):
+  const ORIGIN_LAT = 42.0, ORIGIN_LNG = -70.0;
+  const metersToLatLng = (x, y) => [
+    ORIGIN_LAT + y / 111320,
+    ORIGIN_LNG + x / 82000
+  ];
+  Contact positions use the same coordinate system (meters from origin).
+
+CONTACT HEADING CONVENTION:
+  Contacts store heading in radians, math convention (0=East, CCW+).
+  For display, convert to nautical: (90 - degrees(heading)) % 360
+  For marker rotation, same conversion as vessel markers.
+
+EXISTING MARKER CREATION (FleetMap.jsx):
+  createAssetIcon(asset) builds an SVG-based Leaflet divIcon. Surface=blue 
+  polygon, Air=cyan double polygon. Contact markers should follow the same 
+  pattern but with red color and a distinct shape (triangle, diamond, or X).
+
+TRAIL SYSTEM (App.jsx):
+  Trails are accumulated in a useRef object: { asset_id: [[x,y], ...] }
+  Max 200 points per asset, minimum 2m movement to add a point.
+  Contact trails should use the same system — add contact_id entries to the 
+  trails ref, render with red dashed polylines.
+
+STYLING:
+  - Dark theme: bg-[#0b0f19], text-gray-300, borders border-gray-700/50
+  - Font: JetBrains Mono
+  - Accent colors: blue (#3b82f6) surface, cyan (#06b6d4) air
+  - Use red (#ef4444) for contacts/threats, amber (#f59e0b) for warnings
+  - All new components should match existing Tailwind class patterns
+
+SIDEBAR LAYOUT (App.jsx):
+  Currently: AssetCards → CommandPanel → GpsDeniedToggle → MissionLog
+  Proposed order:
+    MissionStatus (new, compact)
+    AssetCards
+    ContactPanel (new, collapsible or compact)
+    CommandPanel (existing)
+    RTBButton (new) + ScenarioPanel (new, compact)
+    GpsDeniedToggle (modified for 3 states)
+    MissionLog (existing, at bottom — it's a log, scrolls)
+
+────────────────────────────────────────────────────────────────────
+FILE LIST
+────────────────────────────────────────────────────────────────────
+
+  MODIFY:
+  - dashboard/src/App.jsx — wire new components, pass contacts to FleetMap,
+    add contact trail accumulation
+  - dashboard/src/components/FleetMap.jsx — contact markers, contact trails,
+    optional bearing line, optional coastline overlay
+  - dashboard/src/components/GpsDeniedToggle.jsx — 3-state cycle, DENIED support
+
+  CREATE:
+  - dashboard/src/components/RTBButton.jsx
+  - dashboard/src/components/MissionStatus.jsx
+  - dashboard/src/components/ContactPanel.jsx
+  - dashboard/src/components/ScenarioPanel.jsx (optional, nice-to-have)
+
+  MAYBE MODIFY (only if adding coastline endpoint):
+  - src/api/routes.py — GET /api/coastline returning polygon vertices
+
+────────────────────────────────────────────────────────────────────
+DELIVERABLES
+────────────────────────────────────────────────────────────────────
+
+  1. Contact markers visible on map with trails
+  2. RTB button functional
+  3. Contact spawn/remove panel functional
+  4. GPS toggle supports FULL → DEGRADED → DENIED
+  5. Mission status bar showing active mission + asset summary
+  6. Fleet-to-contact distance/bearing (on map or in status bar)
+  7. Coastline overlay (if time permits)
+  8. Scenario presets (if time permits)
+  9. Start the dashboard (cd dashboard && pnpm dev) and backend
+     (.venv/bin/python -m uvicorn src.api.server:app) to verify
+     everything renders. Run Python tests to confirm no regressions.
+  10. Commit when done.
+
+EXISTING TEST COUNT: 147 tests passing as of Audit 3 completion.
 ```
 
 ---
@@ -760,6 +904,29 @@ external data files. Extensible: add RI harbor polygons by appending to `LAND_PO
 
 ---
 
+## AUDIT 3 STATUS UPDATE (Completed 2026-04-01)
+
+**GPS-DENIED DEAD RECKONING BUILT + INTEGRATED.** Commit: `c2caeed`. 147 tests passing (141 + 6 new).
+
+**Schema addition (`src/schemas.py`):**
+- `DENIED = "denied"` added to `GpsMode` enum (now 3 modes: FULL, DEGRADED, DENIED)
+
+**Dead reckoning engine (`src/utils/gps_denied.py`):**
+- `DeadReckoningState` dataclass: `estimated_x`, `estimated_y`, `drift_error`, `time_denied`
+- `dead_reckon_step(dr_state, speed, heading_rad, dt)` — advances DR estimate, adds 0.5% random-walk drift per step
+- `get_navigated_position(true_x, true_y, dr_state, gps_mode)` — returns position by mode
+
+**Integration in `fleet_manager.py`:**
+- `dr_states` dict initialized per vessel in `__init__()`
+- `step()`: GPS-mode-aware navigation — DENIED uses DR position, DEGRADED adds noise, FULL uses true. Physics simulation and land avoidance ALWAYS use true position.
+- `get_fleet_state()`: DENIED reports DR estimated positions and drift error in `position_accuracy`
+- `set_gps_mode()`: initializes DR from true position on DENIED entry, resets on exit
+
+**Tests (`tests/test_gps_denied.py` — 6 new):**
+- DR step accumulates drift, DENIED affects navigation, drift grows over time, GPS restore resets DR, DEGRADED adds nav noise, land avoidance uses true position
+
+---
+
 ## AUDIT 4 STATUS UPDATE (Completed 2026-04-01)
 
 **INTERCEPT MISSION + CONTACT TRACKING BUILT.** 141 tests passing (136 existing + 5 new).
@@ -919,16 +1086,16 @@ Phase 3 (intercept/target — Audit 4, independent of land)
 | 3 | **Audit 7: LLM Command Quality** | DONE ✓ | Waypoint clamping, asset ID validation, expanded prompt, timeout, retry variation |
 | 4 | **Audit 2: Land Avoidance** | DONE ✓ | Cape Cod polygon, land_check.py, heading correction in fleet_manager |
 | 5 | **Audit 4: Mission Lifecycle** | DONE ✓ | Intercept mission, Contact model, target simulation, API endpoints |
-| 6 | **Audit 3: GPS Denied** | HIGH — NEXT | Key differentiator — dead reckoning + drift accumulation |
-| 7 | **Audit 5: Dashboard Polish** | MEDIUM | Visual polish + contact markers + coastline overlay after functionality works |
+| 6 | **Audit 3: GPS Denied** | DONE ✓ | Dead reckoning engine, DENIED mode affects navigation, drift accumulates |
+| 7 | **Audit 5: Dashboard & Ops Center** | HIGH — NEXT | Functional C2 dashboard — contacts on map, RTB control, scenario presets |
 
-**Current state (5 of 7 audits complete):** Navigation is solid, LLM commands are validated, 
-land avoidance works, and intercept/contact tracking is operational. The remaining audits 
-(3, 5) build on this foundation.
+**Current state (6 of 7 audits complete):** All backend systems operational — navigation, 
+land avoidance, LLM commands, intercept/contacts, GPS-denied dead reckoning. 147 tests passing. 
+Only dashboard remains.
 
-**Why Audit 3 is next:** GPS-denied mode is currently cosmetic — noise is added to display 
-positions but navigation uses true state. Making dead reckoning actually affect navigation 
-is a key differentiator for the demo and doesn't depend on any unfinished work.
+**Why Audit 5 is last:** All backend data is streaming via WebSocket. The dashboard needs to 
+actually USE it — contacts are invisible, no RTB button, GPS toggle missing DENIED state, 
+no waypoint visualization, no scenario presets. This is the final integration layer.
 
 ## CRITICAL PHYSICS PARAMETERS TO KNOW
 
