@@ -10,7 +10,7 @@ LocalFleet is a multi-domain (surface + air) naval fleet simulation with:
 - **Architecture**: FleetCommander → FleetManager → vessel_dynamics/DroneAgent
 
 Key files by subsystem:
-- Navigation: `src/navigation/planning.py`, `src/navigation/reactive_avoidance.py`
+- Navigation: `src/navigation/planning.py`, `src/navigation/reactive_avoidance.py`, `src/navigation/land_check.py`
 - Dynamics: `src/dynamics/vessel_dynamics.py`, `src/dynamics/controller.py`, `src/dynamics/drone_dynamics.py`
 - Fleet: `src/fleet/fleet_manager.py`, `src/fleet/fleet_commander.py`, `src/fleet/formations.py`
 - LLM: `src/llm/ollama_client.py`, `src/decision_making/decision_making.py`
@@ -725,22 +725,147 @@ instability. Recommended approach: multiple sub-steps per tick rather than one l
 
 ---
 
-## FUTURE GOAL: Rhode Island Harbor Navigation
+## AUDIT 2 STATUS UPDATE (Completed 2026-04-01)
 
-The current operating area is off Cape Cod (42°N, -70°W) which provides open water for 
-easy mission demos. A future milestone is to have the fleet operate out of a Rhode Island 
-harbor — navigating through the actual harbor channel, out to open water, executing 
-missions, and returning through the channel to dock.
+**LAND AVOIDANCE MODULE BUILT + INTEGRATED.** Commit: `e46962c`
 
-This will require:
-- **Land avoidance** (Audit 2) — coastline polygons for Narragansett Bay / RI harbors
-- **Channel navigation** — predefined safe waypoints or A* path planning through narrow passages
-- **Fine-tuned turn dynamics** — harbor maneuvering needs tighter turns at slower speeds
-- **Realistic speed ramp** — may need to switch from `u_c` to `u` for position (Issue F above) so vessels don't instantly jump to speed in tight quarters
-- **Larger operating area** — waypoint coordinate system may need to handle 10km+ ranges
-- **LLM prompt updates** — coordinate ranges and operating area description must match the new location
+**Approach chosen:** Simplified Cape Cod polygon defined inline (24 lat/lng vertices, ~500m 
+accuracy), converted to local meters at import time. Pure ray-casting — no Shapely or 
+external data files. Extensible: add RI harbor polygons by appending to `LAND_POLYGONS` list.
 
-This is a significant integration effort that builds on Audits 2, 4, 6, and 7.
+**New file: `src/navigation/land_check.py`**
+- `is_on_land(x, y)` — ray-casting point-in-polygon against all land polygons
+- `nearest_water_point(x, y)` — projects to nearest polygon edge + 10m margin into water
+- `check_path_clear(x1, y1, x2, y2)` — sampled line-segment vs coastline (20 sample points)
+- `land_repulsion_heading(x, y, psi, look_ahead)` — sweeps left/right to find clear water, returns partial heading correction (radians)
+- `latlng_to_meters(lat, lng)` — coordinate conversion using shared ORIGIN_LAT/ORIGIN_LNG
+- Cape Cod polygon covers from Canal (Bourne) through Provincetown, both Atlantic and bay coasts
+
+**Integration in `fleet_manager.py step()`:**
+- 6 lines added after `planning()` computes `psi_desired`, before speed-scaling block
+- Calls `land_repulsion_heading(state[0], state[1], psi_desired, look_ahead=75.0)`
+- Adds correction to `psi_desired` — the existing speed-scaling-during-turns and PID controller then operate on the corrected heading
+- Does NOT touch reactive_avoidance (vessel-vessel), controller, or vessel_dynamics
+
+**Tests: `tests/test_land_check.py` — 17 new tests**
+- Coordinate conversion (3), is_on_land point-in-polygon (5), check_path_clear (3), nearest_water_point (2), land_repulsion_heading (3), integration sim (1)
+- Integration test: vessel near Truro coast heading toward land for 50s — land correction prevents grounding
+- **136 total tests passing** (119 existing + 17 new), zero regressions
+
+**What's NOT yet done (needed for RI harbor):**
+- Dashboard coastline overlay (optional Audit 5 item)
+- Higher-resolution polygons for harbor approaches
+- Channel waypoint planning (safe routes through narrow passages)
+- Return-to-base land-aware pathfinding
+
+---
+
+## FUTURE GOAL: Rhode Island Harbor Navigation — Full Roadmap
+
+The end-state demo: fleet departs an RI harbor, transits the channel to open water, 
+intercepts a target, and returns through the channel to dock. This section breaks down 
+every capability needed, what exists today, and what must be built — without breaking 
+anything that already works.
+
+### What Exists Today (foundation)
+| Capability | Status | Files |
+|------------|--------|-------|
+| Surface vessel dynamics | Working | `vessel_dynamics.py`, `controller.py` |
+| Waypoint navigation + pure pursuit | Working (Audit 6) | `planning.py` |
+| Heading wrapping + speed scaling | Working (Audit 6) | `controller.py`, `fleet_manager.py` |
+| Vessel-vessel reactive avoidance | Working | `reactive_avoidance.py` |
+| Land detection (Cape Cod polygon) | Working (Audit 2) | `land_check.py` |
+| Land repulsion heading correction | Working (Audit 2) | `land_check.py` → `fleet_manager.py` |
+| LLM command parsing + validation | Working (Audit 7) | `ollama_client.py`, `fleet_commander.py` |
+| Drone coordination patterns | Working | `drone_coordinator.py`, `drone_dynamics.py` |
+| Return-to-base (straight line) | Working but naive | `fleet_manager.py` |
+| Formation dispatch | Working (at dispatch time) | `formations.py` |
+
+### Gap Analysis — What Must Be Built
+
+**PHASE 1: RI Coastline Data** (extends Audit 2, no code changes beyond land_check.py)
+- Add Narragansett Bay polygon(s) to `LAND_POLYGONS` in `land_check.py`
+- Need: Point Judith → Newport → Jamestown → Conanicut → Prudence Island → Providence shoreline
+- Accuracy needed: ~100m for open bay, ~25m for harbor channels
+- Data source options:
+  - Manual polygon from nautical charts (lightest, same approach as Cape Cod)
+  - NOAA ENC extract for Narragansett Bay (accurate, public domain, but needs parsing)
+  - Natural Earth 1:10m coastline shapefile clipped to area (middle ground)
+- Move `ORIGIN_LAT`/`ORIGIN_LNG` to a shared config or accept per-scenario origins
+- **Risk:** Large/complex polygons slow down ray-casting. Mitigate with bounding-box pre-check per polygon.
+
+**PHASE 2: Channel Waypoint Graph** (new module, ~1 file)
+- Create `src/navigation/channel_nav.py` with a graph of safe waypoints through the harbor
+- Nodes: named waypoints along the channel center (e.g., "harbor_mouth", "channel_buoy_3", "breakwater_exit", "open_water_start")
+- Edges: straight-line segments verified clear via `check_path_clear()`
+- `plan_channel_route(start_xy, end_xy) -> List[Waypoint]` — A* or Dijkstra from nearest channel node to open water
+- This replaces the current straight-line waypoint approach for harbor transits
+- **Key constraint:** Must output waypoints in the same format that `fleet_manager.py dispatch_command()` already consumes (list of `Waypoint(x, y)` in meters). No schema changes needed.
+- For return-to-base: `fleet_manager.py return_to_base()` currently sends vessels straight home. Must route through channel graph instead.
+
+**PHASE 3: Target / Contact Model** (Audit 4 scope — schemas + fleet_manager)
+- Add `INTERCEPT` to `MissionType` enum in `schemas.py` (ONLY schema change needed)
+- Add a `Contact` model: position, heading, speed, ID — represents the target to intercept
+- `fleet_manager.py` needs a `contacts` dict and a step-update for contact movement
+- Intercept logic: compute intercept point (lead angle based on target course/speed), generate waypoints to that point
+- Drone switches to TRACK pattern on the target
+- **This is Audit 4 territory.** Land avoidance and channel nav are prerequisites.
+
+**PHASE 4: Land-Aware Return-to-Base** (modifies fleet_manager.py)
+- Current `return_to_base()` draws a straight line from current position to home
+- If the fleet is in open water and home is in a harbor, the straight line crosses land
+- Fix: use channel_nav to plan the return route through the harbor entrance
+- `return_to_base()` calls `plan_channel_route(current_pos, home_pos)` and dispatches those waypoints
+- The land_repulsion_heading in `step()` acts as a safety net, but the PRIMARY avoidance should be the channel route
+
+**PHASE 5: Slow-Speed Harbor Maneuvering** (optional, vessel_dynamics.py)
+- Current vessels use `u_c` (instant speed) for position. Fine in open water.
+- In a narrow harbor channel, instant speed changes look unrealistic and could overshoot turns
+- Fix: switch to `u` (ramped speed state) for position updates in `vessel_dynamics.py` lines 26-27
+- Also need tighter turn radius at slow speed — reduce `SAT_AMP` or increase `k_psi` proportionally
+- **Only do this if channel navigation looks wrong at the current instant-speed behavior. Don't fix preemptively.**
+
+**PHASE 6: LLM + Dashboard Updates** (Audit 5/7 scope)
+- Update `ollama_client.py` system prompt: new coordinate ranges, RI harbor location, channel terminology
+- Dashboard: render coastline polygons as Leaflet overlays (no-go zones), channel waypoints as markers
+- Add target/contact marker (red) for intercept missions
+- Move ORIGIN_LAT/ORIGIN_LNG to scenario config so Cape Cod and RI demos can coexist
+
+### Dependency Chain (build order)
+```
+Phase 1 (RI polygons)
+    └─→ Phase 2 (channel nav graph)
+            └─→ Phase 4 (land-aware RTB)
+                    └─→ Phase 5 (slow-speed, if needed)
+
+Phase 3 (intercept/target — Audit 4, independent of land)
+    └─→ Phase 6 (dashboard + LLM — after everything else works)
+```
+
+### What NOT To Do
+- Do NOT add a full GIS/ENC parsing pipeline — manually-defined polygons are sufficient for the demo
+- Do NOT modify `schemas.py` beyond adding INTERCEPT to MissionType (if needed) and Contact model
+- Do NOT change physics constants (k_psi, t_psi, SAT_AMP) — tune behavior through speed scaling and waypoint placement
+- Do NOT break the existing Cape Cod demo — RI harbor should be an additional scenario, not a replacement
+- Do NOT implement real-time AIS or external sensor feeds — the target/contact is simulated internally
+
+### Test Strategy for Each Phase
+| Phase | Key Tests |
+|-------|-----------|
+| 1 | Point-in-polygon for RI bay land points, path_clear through channel |
+| 2 | Route from harbor to open water has no land crossings, correct waypoint count |
+| 3 | Intercept command dispatches, vessels converge on moving target |
+| 4 | RTB from open water routes through channel, no land crossings |
+| 5 | Vessel speed ramps up smoothly, doesn't overshoot turns in channel |
+| 6 | LLM generates valid commands for RI scenario, dashboard renders polygons |
+
+### Estimated Scope
+- Phase 1: 1 session (polygon data entry + tests)
+- Phase 2: 1-2 sessions (channel graph + A* + integration)
+- Phase 3: 1-2 sessions (Audit 4 — schemas, target tracking, intercept logic)
+- Phase 4: 1 session (RTB routing through channel graph)
+- Phase 5: 0-1 sessions (only if needed after testing Phase 4)
+- Phase 6: 1-2 sessions (dashboard + LLM updates)
 
 ---
 
@@ -750,20 +875,20 @@ This is a significant integration effort that builds on Audits 2, 4, 6, and 7.
 |-------|-------|----------|-----|
 | 1 | **Audit 1: Navigation Circling** | DONE ✓ | Waypoint completion fixed — vessels reach IDLE |
 | 2 | **Audit 6: Timing & Trajectory** | DONE ✓ | Heading wrapping, speed scaling, yaw noise, acceptance circle, pure pursuit |
-| 3 | **Audit 7: LLM Command Quality** | CRITICAL | LLM can produce out-of-bounds waypoints, hallucinated IDs, no timeout |
-| 4 | **Audit 2: Land Avoidance** | HIGH | Can't demo without this — vessels will cross land |
-| 5 | **Audit 4: Mission Lifecycle** | HIGH | Need intercept + RTB for the demo scenario |
+| 3 | **Audit 7: LLM Command Quality** | DONE ✓ | Waypoint clamping, asset ID validation, expanded prompt, timeout, retry variation |
+| 4 | **Audit 2: Land Avoidance** | DONE ✓ | Cape Cod polygon, land_check.py, heading correction in fleet_manager |
+| 5 | **Audit 4: Mission Lifecycle** | HIGH — NEXT | Need intercept + target tracking + land-aware RTB for RI harbor goal |
 | 6 | **Audit 3: GPS Denied** | MEDIUM | Key differentiator but cosmetic until nav works |
-| 7 | **Audit 5: Dashboard Polish** | MEDIUM | Visual polish after functionality works |
+| 7 | **Audit 5: Dashboard Polish** | MEDIUM | Visual polish + coastline overlay after functionality works |
 
-**Why Audit 6 is now #1 priority:** Audit 1 fixed "vessel never stops" but the 
-vessel's PATH is still broken. The heading wrapping bug alone causes 340° wrong-way 
-turns when a 20° turn would suffice. No amount of land avoidance or dashboard polish 
-matters if the vessels are tracing figure-8s across the harbor.
+**Current state (4 of 7 audits complete):** Navigation is solid — vessels reach waypoints 
+via clean arcs, LLM commands are validated, and land avoidance prevents coastal grounding. 
+The remaining audits (4, 3, 5) build on this foundation.
 
-**Why Audit 7 is #2 priority:** Even with perfect navigation, if the LLM generates 
-waypoints at (50000, 50000) or hallucinated asset IDs, the demo breaks. Validation 
-is a safety net that prevents garbage-in from the LLM layer.
+**Why Audit 4 is next:** It adds the intercept mission type, target/contact tracking, 
+and is the prerequisite for the RI harbor demo scenario (fleet departs harbor → intercepts 
+target → returns). See the "Rhode Island Harbor Navigation — Full Roadmap" section above 
+for the phased plan.
 
 ## CRITICAL PHYSICS PARAMETERS TO KNOW
 
@@ -780,11 +905,14 @@ navigation, physics, or timing needs to understand these:
 | 180° turn time | ~16 seconds | Derived | 80m traveled during turn at 5 m/s |
 | Speed time constant | 50.0s (t_v) | vessel_dynamics.py | u state ramp-up (BUT see note) |
 | Position uses u_c | COMMANDED speed | vessel_dynamics.py line 26 | Instant speed, no ramp |
-| Waypoint acceptance | 108m (200/1852 NMI) | planning.py | Vessel goes IDLE this far from target |
-| Cross-track look-ahead | 2200m (2200/1852 NMI) | planning.py | Path correction distance |
+| Waypoint acceptance | 27m (50/1852 NMI) | planning.py | Reduced in Audit 6 from 108m |
+| Pure pursuit fallback | < 500m to waypoint | planning.py | Ignores cross-track, steers direct (Audit 6) |
+| Cross-track look-ahead | 2200m (2200/1852 NMI) | planning.py | Path correction distance (> 500m only) |
 | Actuator saturation | ±20 | fleet_manager.py SAT_AMP | Limits max rudder torque |
-| Yaw bias noise | 0.5 × randn() per tick | vessel_dynamics.py | Persistent heading drift |
-| PID gains | kp=100, kd=-500, ki=0 | controller.py | No heading wrapping! |
+| Yaw bias noise | 0.1 × randn() per tick | vessel_dynamics.py | Reduced in Audit 6 from 0.5 |
+| PID gains | kp=100, kd=-500, ki=0 | controller.py | Heading wrapping fixed in Audit 6 |
+| Speed scaling (turns) | max(0.3, 1.0 - 0.7×err/π) | fleet_manager.py | Slows to 30% at 180° error (Audit 6) |
+| Land avoidance look-ahead | 75m (1× and 2×) | fleet_manager.py → land_check.py | Checks 75m and 150m ahead (Audit 2) |
 
 **Speed vs Distance Quick Reference:**
 - 200m at 5 m/s = 40 seconds + turn time

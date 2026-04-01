@@ -29,7 +29,7 @@ User (voice/text) → FleetCommander → Ollama → FleetCommand (JSON)
 | Subsystem | Files |
 |-----------|-------|
 | Schemas (source of truth) | `src/schemas.py` |
-| Navigation | `src/navigation/planning.py`, `src/navigation/reactive_avoidance.py` |
+| Navigation | `src/navigation/planning.py`, `src/navigation/reactive_avoidance.py`, `src/navigation/land_check.py` |
 | Dynamics | `src/dynamics/vessel_dynamics.py`, `src/dynamics/controller.py`, `src/dynamics/drone_dynamics.py` |
 | Fleet | `src/fleet/fleet_manager.py`, `src/fleet/fleet_commander.py`, `src/fleet/formations.py` |
 | Drone coordination | `src/fleet/drone_coordinator.py` |
@@ -73,6 +73,8 @@ cd dashboard && pnpm dev
 - **Waypoints in navigation**: Stored in nautical miles (÷1852) for CORALL compatibility
 - **Display heading**: Converted to nautical (0=North) via `(90 - degrees(psi)) % 360`
 - **Simulation tick**: dt=0.25s, WebSocket at 4Hz
+- **Coordinate origin**: ORIGIN_LAT=42.0, ORIGIN_LNG=-70.0 (off Cape Cod). Defined in `dashboard/src/components/FleetMap.jsx` and `src/navigation/land_check.py`
+- **Land avoidance**: `land_check.py` has simplified Cape Cod polygon (~500m accuracy). `land_repulsion_heading()` is called in `fleet_manager.py step()` after `planning()` and before the PID controller. Returns heading correction in radians. Extensible via `LAND_POLYGONS` list.
 
 ## Reference Files
 Context dumps used during project creation are in `docs/reference/`:
