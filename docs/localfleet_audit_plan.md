@@ -684,12 +684,72 @@ path to get there." Both are needed for correct navigation behavior.
 
 ---
 
+## AUDIT 6 STATUS UPDATE (Completed 2026-04-01)
+
+**ALL 6 ISSUES FIXED + 3 TRAJECTORY TESTS ADDED.** Commit: `054c6cf`
+
+**Changes by file:**
+
+| File | Issue | Fix Applied |
+|------|-------|-------------|
+| `src/dynamics/controller.py` | A — Heading wrapping | `e_psi = (e_psi + np.pi) % (2*np.pi) - np.pi` — vessels now take the short-way turn |
+| `src/fleet/fleet_manager.py` | B — Speed during turns | Speed scales to 30% at 180° error: `max(0.3, 1.0 - 0.7 * err/pi)` — tight arcs instead of wide loops |
+| `src/dynamics/vessel_dynamics.py` | C — Yaw bias noise | Reduced `w_b` from `0.5 * randn()` to `0.1 * randn()` — less drift, still realistic |
+| `src/navigation/planning.py` | D — Acceptance circle | Reduced from 108m (`200/1852`) to 27m (`50/1852`) — better for short missions |
+| `src/navigation/planning.py` | E — Pure pursuit fallback | Within 500m of waypoint, steer directly (ignore cross-track) — eliminates near-waypoint wobble |
+| N/A | F — `u_c` vs `u` for position | No change — instant speed via `u_c` is acceptable for demo. Documented as intentional. |
+
+**Tests added to `tests/test_fleet_manager.py`:**
+- `test_vessel_does_not_overshoot_on_uturn` — U-turn overshoot < 100m
+- `test_return_to_base_no_loop` — RTB 500m in < 150s, trajectory < 150% straight-line
+- `test_vessel_straight_line_accuracy` — lateral deviation < 30m over 1000m
+
+**Live verification:** Patrol to (800, 400) with all assets → RTB. Clean arcs, no figure-8, 
+no wrong-direction travel. Visible improvement on dashboard trail lines.
+
+**Note on Issue F (instant speed):** The vessel dynamics use `u_c` (commanded speed) 
+directly for position updates rather than the `u` state (which ramps up via a 50s time 
+constant). This means vessels move at full speed instantly. The `u` state IS computed 
+and ramps up, but only affects the reported speed in `get_fleet_state()`, not the actual 
+trajectory. This is a known inconsistency but acceptable for demo purposes. If realistic 
+speed ramp-up is ever needed (e.g., for harbor maneuvering), change lines 26-27 in 
+`vessel_dynamics.py` from `u_c * cos/sin(psi)` to `u * cos/sin(psi)`.
+
+**Future consideration — simulation time scaling:** The physics engine uses `dt` passed 
+into `step()`. A time multiplier (e.g., 2x, 4x, 8x) can be implemented by calling 
+`step(dt * time_scale)` or by calling `step(dt)` multiple times per real-time tick. 
+This would let the operator fast-forward missions on screen without changing physics 
+constants. The WebSocket tick rate (4Hz) stays the same — only the sim advances faster. 
+This is safe as long as `dt * time_scale` stays below ~1.0s to avoid Euler integration 
+instability. Recommended approach: multiple sub-steps per tick rather than one large dt.
+
+---
+
+## FUTURE GOAL: Rhode Island Harbor Navigation
+
+The current operating area is off Cape Cod (42°N, -70°W) which provides open water for 
+easy mission demos. A future milestone is to have the fleet operate out of a Rhode Island 
+harbor — navigating through the actual harbor channel, out to open water, executing 
+missions, and returning through the channel to dock.
+
+This will require:
+- **Land avoidance** (Audit 2) — coastline polygons for Narragansett Bay / RI harbors
+- **Channel navigation** — predefined safe waypoints or A* path planning through narrow passages
+- **Fine-tuned turn dynamics** — harbor maneuvering needs tighter turns at slower speeds
+- **Realistic speed ramp** — may need to switch from `u_c` to `u` for position (Issue F above) so vessels don't instantly jump to speed in tight quarters
+- **Larger operating area** — waypoint coordinate system may need to handle 10km+ ranges
+- **LLM prompt updates** — coordinate ranges and operating area description must match the new location
+
+This is a significant integration effort that builds on Audits 2, 4, 6, and 7.
+
+---
+
 ## RECOMMENDED EXECUTION ORDER
 
 | Order | Audit | Priority | Why |
 |-------|-------|----------|-----|
 | 1 | **Audit 1: Navigation Circling** | DONE ✓ | Waypoint completion fixed — vessels reach IDLE |
-| 2 | **Audit 6: Timing & Trajectory** | CRITICAL | Vessels still loop/figure-8 due to heading wrapping + slow turns |
+| 2 | **Audit 6: Timing & Trajectory** | DONE ✓ | Heading wrapping, speed scaling, yaw noise, acceptance circle, pure pursuit |
 | 3 | **Audit 7: LLM Command Quality** | CRITICAL | LLM can produce out-of-bounds waypoints, hallucinated IDs, no timeout |
 | 4 | **Audit 2: Land Avoidance** | HIGH | Can't demo without this — vessels will cross land |
 | 5 | **Audit 4: Mission Lifecycle** | HIGH | Need intercept + RTB for the demo scenario |
