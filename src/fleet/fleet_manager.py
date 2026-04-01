@@ -19,6 +19,7 @@ from src.dynamics.actuator_modeling import actuator_modeling
 from src.dynamics.drone_dynamics import DroneAgent
 from src.core.integration import integration
 from src.navigation.planning import waypoint_selection, planning
+from src.navigation.land_check import land_repulsion_heading, is_on_land
 from src.utils.gps_denied import degrade_position
 from src.fleet.drone_coordinator import DroneCoordinator
 from src.fleet.formations import apply_formation
@@ -165,6 +166,12 @@ class FleetManager:
                 psi_desired = planning(wpts_x, wpts_y, x_nmi, y_nmi, i_wpt)
                 if psi_desired is None:
                     psi_desired = state[2]
+
+                # Land avoidance — steer away if heading toward coastline
+                land_corr = land_repulsion_heading(
+                    state[0], state[1], psi_desired, look_ahead=75.0,
+                )
+                psi_desired += land_corr
 
                 # Reduce speed when turning hard to prevent wide arcs
                 heading_err = abs((psi_desired - state[2] + np.pi) % (2 * np.pi) - np.pi)
