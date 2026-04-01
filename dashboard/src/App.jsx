@@ -1,4 +1,4 @@
-import { useRef } from 'react'
+import { useRef, useState, useCallback } from 'react'
 import useWebSocket from './hooks/useWebSocket'
 import FleetMap from './components/FleetMap'
 import AssetCard from './components/AssetCard'
@@ -18,6 +18,20 @@ export default function App() {
   const contacts = fleetState?.contacts || []
   const trails = useRef({})
   const contactTrails = useRef({})
+  const commsMode = fleetState?.autonomy?.comms_mode || 'full'
+
+  const toggleCommsMode = useCallback(async () => {
+    const newMode = commsMode === 'full' ? 'denied' : 'full'
+    try {
+      await fetch('/api/comms-mode', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mode: newMode }),
+      })
+    } catch (e) {
+      console.error('Failed to toggle comms mode:', e)
+    }
+  }, [commsMode])
 
   // Accumulate position history for asset trail lines
   for (const a of assets) {
@@ -104,6 +118,23 @@ export default function App() {
           </div>
 
           <GpsDeniedToggle currentMode={fleetState?.gps_mode || 'full'} assets={assets} />
+
+          {/* Comms Mode Toggle */}
+          <div className="border border-slate-700 rounded p-2 bg-slate-900/50">
+            <div className="flex items-center justify-between">
+              <span className="text-xs text-slate-400">COMMS LINK</span>
+              <button
+                onClick={toggleCommsMode}
+                className={`px-3 py-1 text-xs font-bold rounded transition-colors ${
+                  commsMode === 'denied'
+                    ? 'bg-red-700 text-white animate-pulse'
+                    : 'bg-green-700 text-white'
+                }`}
+              >
+                {commsMode === 'denied' ? 'DENIED' : 'FULL'}
+              </button>
+            </div>
+          </div>
           <ScenarioPanel />
           <MissionLog fleetState={fleetState} />
         </div>

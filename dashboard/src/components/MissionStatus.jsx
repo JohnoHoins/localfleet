@@ -10,6 +10,10 @@ export default function MissionStatus({ fleetState, contacts = [] }) {
   const threats = fleetState.threat_assessments || []
   const interceptRecommended = fleetState.intercept_recommended || false
   const recommendedTarget = fleetState.recommended_target || null
+  const autonomy = fleetState.autonomy || {}
+  const commsMode = autonomy.comms_mode || 'full'
+  const commsDeniedDuration = autonomy.comms_denied_duration || 0
+  const autonomousActions = autonomy.autonomous_actions || []
 
   // Asset status counts
   const counts = {}
@@ -78,6 +82,26 @@ export default function MissionStatus({ fleetState, contacts = [] }) {
       {interceptRecommended && (
         <div className="mt-1.5 text-xs font-bold text-red-400 animate-pulse">
           INTERCEPT RECOMMENDED — {recommendedTarget?.toUpperCase()}
+        </div>
+      )}
+
+      {commsMode === 'denied' && (
+        <div className="mt-2 border border-red-700 rounded p-2 bg-red-950/50">
+          <div className="text-xs font-bold text-red-400 animate-pulse">
+            COMMS DENIED — AUTONOMOUS
+          </div>
+          <div className="text-[10px] text-red-300 mt-0.5">
+            Duration: {Math.floor(commsDeniedDuration)}s | Standing orders: {autonomy.comms_lost_behavior || 'return_to_base'}
+          </div>
+          {autonomousActions.length > 0 && (
+            <div className="mt-1 space-y-0.5">
+              {autonomousActions.map((action, i) => (
+                <div key={i} className="text-[10px] text-orange-300 font-mono">
+                  {action}
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
     </div>

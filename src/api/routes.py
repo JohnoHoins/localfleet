@@ -10,6 +10,7 @@ GET  /api/logs/summary  — mission log summary
 """
 import os
 import tempfile
+import time
 from typing import Optional
 
 from fastapi import APIRouter, Query, Request, UploadFile, File
@@ -30,6 +31,8 @@ def create_router() -> APIRouter:
     async def post_command(req: CommandRequest, request: Request):
         """Parse NL text and dispatch to fleet."""
         commander = request.app.state.commander
+        if commander.fleet_manager.comms_mode == "denied":
+            return CommandResponse(success=False, error="COMMS DENIED — fleet operating autonomously")
         return commander.handle_command(req)
 
     @router.get("/assets", response_model=FleetState)
@@ -59,10 +62,28 @@ def create_router() -> APIRouter:
             "noise_meters": req.noise_meters,
         }
 
+    class CommsModeRequest(BaseModel):
+        mode: str  # "full" or "denied"
+
+    @router.post("/comms-mode")
+    async def post_comms_mode(req: CommsModeRequest, request: Request):
+        fm = request.app.state.commander.fleet_manager
+        fm.set_comms_mode(req.mode)
+        elapsed = 0.0
+        if fm.comms_mode == "denied" and fm.comms_denied_since:
+            elapsed = time.time() - fm.comms_denied_since
+        return {
+            "comms_mode": fm.comms_mode,
+            "autonomous_actions": fm.autonomous_actions[-10:],
+            "denied_duration": elapsed,
+        }
+
     @router.post("/return-to-base")
     async def post_return_to_base(request: Request):
         """Trigger comms-lost return-to-base for all assets."""
         commander = request.app.state.commander
+        if commander.fleet_manager.comms_mode == "denied":
+            return {"success": False, "error": "COMMS DENIED — fleet operating autonomously"}
         commander.return_to_base()
         return {"success": True, "action": "return_to_base"}
 
@@ -91,7 +112,10 @@ def create_router() -> APIRouter:
     async def post_command_direct(cmd: FleetCommand, request: Request):
         """Accept a structured FleetCommand directly, bypassing the LLM."""
         commander = request.app.state.commander
-        commander.fleet_manager.dispatch_command(cmd)
+        fm = commander.fleet_manager
+        if fm.comms_mode == "denied":
+            return {"success": False, "error": "COMMS DENIED — fleet operating autonomously"}
+        fm.dispatch_command(cmd)
         commander.last_command = cmd
         return {"success": True, "fleet_command": cmd.model_dump()}
 

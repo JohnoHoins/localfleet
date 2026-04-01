@@ -105,6 +105,13 @@ class FleetManager:
         self.recommended_target: str | None = None
         self._threat_check_counter: int = 0
 
+        # Comms mode
+        self.comms_mode: str = "full"
+        self.comms_denied_since: float | None = None
+        self.last_command: FleetCommand | None = None
+        self.autonomous_actions: list[str] = []
+        AUTONOMOUS_ESCALATION_DELAY = 60.0  # seconds before auto-engage
+
     # ------------------------------------------------------------------
     # Contact (target) management
     # ------------------------------------------------------------------
@@ -127,6 +134,7 @@ class FleetManager:
     # Command dispatch
     # ------------------------------------------------------------------
     def dispatch_command(self, cmd: FleetCommand):
+        self.last_command = cmd
         self.active_mission = cmd.mission_type
         self.formation = cmd.formation
         self.comms_lost_behavior = cmd.comms_lost_behavior
@@ -340,6 +348,9 @@ class FleetManager:
             self._threat_check_counter = 0
             self._check_threats()
 
+        # Comms-denied autonomous behavior
+        self._handle_comms_denied()
+
         # Drone
         self.drone.step(dt)
 
@@ -452,6 +463,17 @@ class FleetManager:
         data["intercept_recommended"] = self.intercept_recommended
         data["recommended_target"] = self.recommended_target
 
+        # Comms state
+        elapsed = 0.0
+        if self.comms_mode == "denied" and self.comms_denied_since:
+            elapsed = time.time() - self.comms_denied_since
+        data["autonomy"] = {
+            "comms_mode": self.comms_mode,
+            "comms_denied_duration": elapsed,
+            "comms_lost_behavior": self.comms_lost_behavior,
+            "autonomous_actions": self.autonomous_actions[-10:],
+        }
+
         return data
 
     # ------------------------------------------------------------------
@@ -511,3 +533,87 @@ class FleetManager:
                 )
         self.gps_mode = mode
         self.noise_meters = noise_meters
+
+    # ------------------------------------------------------------------
+    # Comms mode control
+    # ------------------------------------------------------------------
+    def set_comms_mode(self, mode: str):
+        """Toggle comms mode between 'full' and 'denied'."""
+        if mode == "denied" and self.comms_mode != "denied":
+            self.comms_denied_since = time.time()
+            self.autonomous_actions = []
+            if not self._has_active_mission():
+                self._execute_comms_fallback("idle_on_denial")
+        elif mode == "full" and self.comms_mode == "denied":
+            duration = time.time() - (self.comms_denied_since or time.time())
+            self.autonomous_actions.append(
+                f"COMMS RESTORED after {duration:.0f}s"
+            )
+            self.comms_denied_since = None
+        self.comms_mode = mode
+
+    def _has_active_mission(self) -> bool:
+        return any(v["status"] in (AssetStatus.EXECUTING, AssetStatus.RETURNING)
+                   for v in self.vessels.values())
+
+    def _handle_comms_denied(self):
+        """Autonomous behavior when C2 link is down. Called from step()."""
+        if self.comms_mode != "denied" or self.comms_denied_since is None:
+            return
+        elapsed = time.time() - self.comms_denied_since
+
+        # Level 2: idle fleet executes standing orders
+        if not self._has_active_mission():
+            self._execute_comms_fallback("idle_during_denial")
+
+        # Level 3: auto-engage after escalation delay
+        if (self.intercept_recommended
+                and elapsed > 60.0
+                and self.active_mission != MissionType.INTERCEPT):
+            self._auto_engage_threat()
+
+    def _execute_comms_fallback(self, trigger: str):
+        """Execute comms_lost_behavior standing orders."""
+        behavior = self.comms_lost_behavior
+        if behavior == "return_to_base":
+            # Check if already returning
+            if any(v["status"] == AssetStatus.RETURNING for v in self.vessels.values()):
+                return
+            self.return_to_base()
+            self.autonomous_actions.append(
+                f"AUTO-RTB: {trigger}, standing orders = return_to_base"
+            )
+        elif behavior == "hold_position":
+            for vid, v in self.vessels.items():
+                if v["status"] in (AssetStatus.EXECUTING,):
+                    v["status"] = AssetStatus.IDLE
+                    v["desired_speed"] = 0.0
+            self.autonomous_actions.append(
+                f"AUTO-HOLD: {trigger}, standing orders = hold_position"
+            )
+        # "continue_mission" = do nothing
+
+    def _auto_engage_threat(self):
+        """Fully autonomous intercept — no human in the loop."""
+        target_id = self.recommended_target
+        if not target_id or target_id not in self.contacts:
+            return
+        contact = self.contacts[target_id]
+        surface_cmds = []
+        for vid in self.vessels:
+            surface_cmds.append(AssetCommand(
+                asset_id=vid, domain=DomainType.SURFACE,
+                waypoints=[Waypoint(x=contact.x, y=contact.y)],
+                speed=8.0,
+            ))
+        cmd = FleetCommand(
+            mission_type=MissionType.INTERCEPT,
+            assets=surface_cmds,
+            formation=self.formation,
+        )
+        self.dispatch_command(cmd)
+        elapsed = time.time() - (self.comms_denied_since or time.time())
+        self.autonomous_actions.append(
+            f"AUTO-INTERCEPT: {target_id} at ({contact.x:.0f}, {contact.y:.0f}) "
+            f"— comms denied {elapsed:.0f}s, threat critical, no operator"
+        )
