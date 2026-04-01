@@ -166,9 +166,14 @@ class FleetManager:
                 if psi_desired is None:
                     psi_desired = state[2]
 
+                # Reduce speed when turning hard to prevent wide arcs
+                heading_err = abs((psi_desired - state[2] + np.pi) % (2 * np.pi) - np.pi)
+                speed_scale = max(0.3, 1.0 - 0.7 * heading_err / np.pi)
+                effective_speed = v["desired_speed"] * speed_scale
+
                 tau_c, v_c, ui_psi1 = controller(
                     psi_desired, state[2], state[3],
-                    v["desired_speed"], state[4], v["ui_psi1"], dt,
+                    effective_speed, state[4], v["ui_psi1"], dt,
                 )
                 v["ui_psi1"] = ui_psi1
                 tau_ac = actuator_modeling(tau_c, SAT_AMP)

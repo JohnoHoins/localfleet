@@ -1,3 +1,6 @@
+import numpy as np
+
+
 def controller(psi_p, psi, r, v_p, b, ui_psi1, Ts):
     """
     Controller function for yaw and speed control.
@@ -29,6 +32,7 @@ def controller(psi_p, psi, r, v_p, b, ui_psi1, Ts):
     # ki_yaw = 0
 
     e_psi = psi_p - psi
+    e_psi = (e_psi + np.pi) % (2 * np.pi) - np.pi  # wrap to [-pi, pi]
     ui_psi = ui_psi1 + Ts * e_psi
     ui_psi1 = ui_psi
 

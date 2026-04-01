@@ -15,7 +15,7 @@ def waypoint_selection(Xwpt, Ywpt, x, y, i_wpt):
     int: Updated waypoint index
     """
    
-    Circ = 200/1852  # Threshold distance for selecting the next waypoint (~108m)
+    Circ = 50/1852  # Threshold distance for selecting the next waypoint (~27m)
 
     for j in range(i_wpt, len(Xwpt)):
         if np.sqrt((Xwpt[j] - x)**2 + (Ywpt[j] - y)**2) < Circ:
@@ -44,17 +44,20 @@ def planning(Xwpt, Ywpt, x, y, i_wpt):
 
     Xewpt = Xwpt[i_wpt] - x
     Yewpt = Ywpt[i_wpt] - y
-    # print(Xewpt, Yewpt)
 
-    L = np.sqrt((Xwpt[i_wpt] - Xwpt[i_wpt - 1])**2 + (Ywpt[i_wpt] - Ywpt[i_wpt - 1])**2)
-    S = (Xewpt * (Xwpt[i_wpt] - Xwpt[i_wpt - 1]) + Yewpt * (Ywpt[i_wpt] - Ywpt[i_wpt - 1])) / L
+    dist_to_wpt = np.sqrt(Xewpt**2 + Yewpt**2)
+    if dist_to_wpt < 500/1852:  # within 500m, use pure pursuit
+        psi_p = np.arctan2(Yewpt, Xewpt)
+    else:
+        # Cross-track error correction
+        L = np.sqrt((Xwpt[i_wpt] - Xwpt[i_wpt - 1])**2 + (Ywpt[i_wpt] - Ywpt[i_wpt - 1])**2)
+        S = (Xewpt * (Xwpt[i_wpt] - Xwpt[i_wpt - 1]) + Yewpt * (Ywpt[i_wpt] - Ywpt[i_wpt - 1])) / L
 
-    delta_p = np.arctan2(Ywpt[i_wpt] - Ywpt[i_wpt - 1], Xwpt[i_wpt] - Xwpt[i_wpt - 1]) - np.arctan2(Yewpt, Xewpt)
-    err = S * np.tan(delta_p)
-    #print(err)
-    
-    rho = 2200/1852
+        delta_p = np.arctan2(Ywpt[i_wpt] - Ywpt[i_wpt - 1], Xwpt[i_wpt] - Xwpt[i_wpt - 1]) - np.arctan2(Yewpt, Xewpt)
+        err = S * np.tan(delta_p)
 
-    psi_p = np.arctan2(Yewpt, Xewpt) - np.arctan(err / rho) 
+        rho = 2200/1852
+
+        psi_p = np.arctan2(Yewpt, Xewpt) - np.arctan(err / rho)
 
     return psi_p

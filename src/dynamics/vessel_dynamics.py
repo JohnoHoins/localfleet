@@ -28,7 +28,7 @@ def vessel_dynamics(x_0, inputs):
     psi_dot = r
 
     w_r = 0
-    w_b = 0.5 * np.random.randn()
+    w_b = 0.1 * np.random.randn()
 
     # Nomoto model
     r_dot = -(1/t_psi) * r + (1/t_psi) * k_psi * (tau_c - b) + w_r

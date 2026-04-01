@@ -1,5 +1,6 @@
 """Tests for FleetManager — multi-domain fleet coordinator."""
 import math
+import numpy as np
 from src.fleet.fleet_manager import FleetManager
 from src.schemas import (
     FleetCommand, AssetCommand, Waypoint,
@@ -168,3 +169,111 @@ def test_vessel_reaches_waypoint_and_goes_idle():
     final_y = fm.vessels["alpha"]["state"][1]
     dist = math.sqrt((final_x - 1000.0)**2 + (final_y - 0.0)**2)
     assert dist < 300.0, f"Vessel should be near waypoint, but is {dist:.1f}m away"
+
+
+def test_vessel_does_not_overshoot_on_uturn():
+    """Vessel at heading 0° targeting waypoint at 180° should NOT travel
+    more than 100m in the wrong direction before correcting course."""
+    fm = FleetManager()
+    # Place alpha at origin heading East (psi=0), waypoint is West (-1000, 0)
+    fm.vessels["alpha"]["state"] = np.array([500.0, 0.0, 0.0, 0.0, 0.0, 0.0])
+
+    cmd = FleetCommand(
+        mission_type=MissionType.PATROL,
+        assets=[
+            AssetCommand(
+                asset_id="alpha",
+                domain=DomainType.SURFACE,
+                waypoints=[Waypoint(x=-500.0, y=0.0)],
+                speed=5.0,
+            ),
+        ],
+    )
+    fm.dispatch_command(cmd)
+
+    dt = 0.25
+    max_east = 500.0  # starting x
+    for _ in range(4000):
+        fm.step(dt)
+        cur_x = fm.vessels["alpha"]["state"][0]
+        if cur_x > max_east:
+            max_east = cur_x
+        if fm.vessels["alpha"]["status"] == AssetStatus.IDLE:
+            break
+
+    overshoot = max_east - 500.0
+    assert overshoot < 100.0, (
+        f"Vessel overshot {overshoot:.1f}m in the wrong direction during U-turn"
+    )
+
+
+def test_return_to_base_no_loop():
+    """Vessel 500m from home should return in under 150s without looping."""
+    fm = FleetManager()
+    # Place alpha 500m away from home (0,0)
+    fm.vessels["alpha"]["state"] = np.array([400.0, 300.0, 0.0, 0.0, 0.0, 0.0])
+
+    fm.return_to_base()
+
+    dt = 0.25
+    straight_line_dist = math.sqrt(400.0**2 + 300.0**2)  # 500m
+    max_dist_from_home = 0.0
+    steps = 0
+
+    for steps in range(4000):  # 1000 seconds max
+        fm.step(dt)
+        sx = fm.vessels["alpha"]["state"][0]
+        sy = fm.vessels["alpha"]["state"][1]
+        d = math.sqrt(sx**2 + sy**2)
+        if d > max_dist_from_home:
+            max_dist_from_home = d
+        if fm.vessels["alpha"]["status"] == AssetStatus.IDLE:
+            break
+
+    elapsed = (steps + 1) * dt
+    assert fm.vessels["alpha"]["status"] == AssetStatus.IDLE, (
+        f"Vessel should be IDLE after RTB, but is {fm.vessels['alpha']['status']}"
+    )
+    assert elapsed < 150.0, (
+        f"RTB took {elapsed:.1f}s, expected under 150s for 500m"
+    )
+    assert max_dist_from_home < straight_line_dist * 1.5, (
+        f"Trajectory went {max_dist_from_home:.1f}m from home, "
+        f"exceeding 150% of straight-line {straight_line_dist:.1f}m"
+    )
+
+
+def test_vessel_straight_line_accuracy():
+    """Vessel navigating 1000m in a straight line should stay within 30m
+    of the ideal path (lateral deviation)."""
+    fm = FleetManager()
+    # Alpha starts at (0,0) heading East, waypoint at (1000, 0)
+    cmd = FleetCommand(
+        mission_type=MissionType.PATROL,
+        assets=[
+            AssetCommand(
+                asset_id="alpha",
+                domain=DomainType.SURFACE,
+                waypoints=[Waypoint(x=1000.0, y=0.0)],
+                speed=5.0,
+            ),
+        ],
+    )
+    fm.dispatch_command(cmd)
+
+    dt = 0.25
+    max_lateral = 0.0
+    for _ in range(4000):
+        fm.step(dt)
+        sy = fm.vessels["alpha"]["state"][1]
+        if abs(sy) > max_lateral:
+            max_lateral = abs(sy)
+        if fm.vessels["alpha"]["status"] == AssetStatus.IDLE:
+            break
+
+    assert fm.vessels["alpha"]["status"] == AssetStatus.IDLE, (
+        f"Vessel should have reached waypoint"
+    )
+    assert max_lateral < 30.0, (
+        f"Max lateral deviation was {max_lateral:.1f}m, expected under 30m"
+    )
