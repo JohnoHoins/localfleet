@@ -18,7 +18,7 @@ from pydantic import BaseModel
 
 from src.schemas import (
     CommandRequest, CommandResponse, FleetState, GpsDeniedRequest,
-    Contact, DomainType,
+    Contact, DomainType, FleetCommand,
 )
 from src.voice.whisper_local import transcribe_audio
 
@@ -86,6 +86,14 @@ def create_router() -> APIRouter:
         finally:
             if tmp_path and os.path.exists(tmp_path):
                 os.unlink(tmp_path)
+
+    @router.post("/command-direct")
+    async def post_command_direct(cmd: FleetCommand, request: Request):
+        """Accept a structured FleetCommand directly, bypassing the LLM."""
+        commander = request.app.state.commander
+        commander.fleet_manager.dispatch_command(cmd)
+        commander.last_command = cmd
+        return {"success": True, "fleet_command": cmd.model_dump()}
 
     # ------------------------------------------------------------------
     # Contacts (simulated targets)

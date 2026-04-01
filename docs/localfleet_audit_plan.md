@@ -1,3 +1,4 @@
+
 # LocalFleet — Comprehensive Audit Plan for Claude Code
 
 ## Project Overview (Context for Every Prompt)
@@ -13,1131 +14,1309 @@ Key files by subsystem:
 - Navigation: `src/navigation/planning.py`, `src/navigation/reactive_avoidance.py`, `src/navigation/land_check.py`
 - Dynamics: `src/dynamics/vessel_dynamics.py`, `src/dynamics/controller.py`, `src/dynamics/drone_dynamics.py`
 - Fleet: `src/fleet/fleet_manager.py`, `src/fleet/fleet_commander.py`, `src/fleet/formations.py`
-- LLM: `src/llm/ollama_client.py`, `src/decision_making/decision_making.py`
+- Drone: `src/fleet/drone_coordinator.py`
+- LLM: `src/llm/ollama_client.py`
+- Decision making: `src/decision_making/decision_making.py`
 - GPS: `src/utils/gps_denied.py`
 - Dashboard: `dashboard/src/components/FleetMap.jsx`, `dashboard/src/App.jsx`
-- Schemas: `src/schemas.py`
+- Schemas: `src/schemas.py` (source of truth — never modify schemas to fix bugs)
+- API: `src/api/routes.py`, `src/api/server.py`
+
+**Hardware**: Mac Studio M3 Ultra 256GB, everything runs air-gapped.
+**Test suite**: 147 tests passing. Run with `.venv/bin/python -m pytest tests/ -v`
 
 ---
 
-## AUDIT 1: Navigation & Circling Bug
-**Goal**: Find and fix why vessels go in endless circles.
+## EXECUTION ORDER — STATUS TRACKER
 
-```
-AUDIT TASK: Fix the vessel circling/endless-loop navigation bug.
-
-CONTEXT: Vessels are going in endless circles instead of reaching waypoints. 
-The navigation pipeline is:
-
-1. `src/navigation/planning.py` — `waypoint_selection()` decides when to advance 
-   to next waypoint (threshold: 200/1852 nmi ≈ 108m). `planning()` computes 
-   desired heading using cross-track error correction.
-
-2. `src/navigation/reactive_avoidance.py` — `reactive_avoidance()` computes an 
-   avoidance heading offset (psi_oa) using Gaussian bearing weights and Z-shaped 
-   range membership functions.
-
-3. `src/fleet/fleet_manager.py` — `FleetManager.step()` at line ~2663 calls 
-   waypoint_selection, planning, then feeds psi_desired to the PID controller.
-
-4. `src/dynamics/controller.py` — PID yaw controller with kp=100, kd=-500, ki=0.
-
-5. `src/dynamics/vessel_dynamics.py` — First-order Nomoto-like dynamics with 
-   Euler integration.
-
-KNOWN ISSUES TO INVESTIGATE:
-
-A) In `planning.py`, the `planning()` function uses cross-track error with 
-   `rho = 2200/1852`. This look-ahead distance may be too large relative to 
-   the waypoint acceptance circle (200/1852). Check if the vessel oscillates 
-   around the path or overshoots waypoints.
-
-B) In `fleet_manager.py` step(), when `i_wpt >= len(wpts_x)`, it sets 
-   `i_wpt = len(wpts_x) - 1` and status to IDLE, BUT then continues to call 
-   `planning()` with that same i_wpt. Check if this causes the vessel to keep 
-   turning toward an already-reached waypoint.
-
-C) The heading convention may be inconsistent: `vessel_dynamics.py` uses 
-   mathematical convention (psi in radians, 0 = East, CCW positive), but 
-   `fleet_manager.py` converts heading for display as `(90 - degrees(psi)) % 360` 
-   (nautical: 0 = North). Verify that `planning()` output matches what 
-   `controller()` expects.
-
-D) The PID controller has kd = -500 (negative derivative gain). This is unusual 
-   and could cause oscillation. Check if this creates a positive feedback loop 
-   on yaw rate.
-
-E) In `waypoint_selection()`, the for-loop iterates from i_wpt to end and can 
-   increment i_wpt multiple times in one call if multiple waypoints are within 
-   the threshold. This could skip waypoints unexpectedly.
-
-F) The `planning()` function returns None when i_wpt == 0. In `fleet_manager.py`, 
-   this is handled by falling back to current heading, but check edge cases where 
-   i_wpt stays at 0.
-
-DELIVERABLES:
-1. Identify the root cause(s) of circular motion
-2. Provide fixed code for each affected file
-3. Add a simple test that verifies a vessel reaches a waypoint 1000m away 
-   within a reasonable number of simulation steps
-```
+| Order | Audit | Status | Commit | Tests |
+|-------|-------|--------|--------|-------|
+| 1 | Audit 1: Navigation Circling | DONE | (early commits) | Waypoint completion fixed |
+| 2 | Audit 6: Timing & Trajectory | DONE | `054c6cf` | 3 trajectory tests |
+| 3 | Audit 7: LLM Command Quality | DONE | `478a866` | Validation + timeout tests |
+| 4 | Audit 2: Land Avoidance | DONE | `e46962c` | 17 land_check tests |
+| 5 | Audit 4: Mission Lifecycle | DONE | `098222b` | 5 intercept tests |
+| 6 | Audit 3: GPS Denied | DONE | `c2caeed` | 6 dead reckoning tests |
+| 7 | Audit 5: Dashboard C2 Ops | DONE | `dd49d20` | pnpm build clean |
+| 8 | **Audit 8: Predictive Intercept** | **NEXT** | — | — |
+| 9 | **Audit 9: Autonomous Threat Response** | PENDING | — | — |
+| 10 | **Audit 10: Comms-Denied Autonomy** | PENDING | — | — |
+| 11 | **Audit 11: Cross-Domain Kill Chain** | PENDING | — | — |
+| 12 | **Audit 12: Decision Audit Trail** | PENDING | — | — |
+| 13 | **Audit 13: Mission-Specific Behaviors** | PENDING | — | — |
 
 ---
 
-## AUDIT 2: Land Avoidance & Coastline Data
-**Goal**: Add land/coastline awareness so vessels don't cross land.
+## AUDIT 8: Predictive Intercept — Lead the Target
+**Goal**: Fleet converges on where the target WILL BE, not where it was when the command was issued. This is the single highest-impact change for demonstrating tactical intelligence.
 
 ```
-AUDIT TASK: Implement land avoidance for surface vessels and harbor navigation.
+Execute Audit 8 — Predictive Intercept for the LocalFleet project.
 
-CONTEXT: The system currently has ZERO land awareness. There is no coastline 
-data, no geofencing, and no land collision checking anywhere in the codebase.
+Read CLAUDE.md first. Then read docs/localfleet_audit_plan.md — focus on AUDIT 8.
 
-The dashboard uses OpenStreetMap tiles centered at:
-- ORIGIN_LAT = 42.0, ORIGIN_LNG = -70.0 (off the coast of Massachusetts)
-- Defined in `dashboard/src/components/FleetMap.jsx` lines 44-47
+COMPLETED AUDITS (all backend + dashboard work is done):
+- Audits 1-7 + Audit 5: Navigation, land avoidance, GPS-denied DR, intercept
+  mission, contact tracking, LLM hardening, full C2 dashboard.
+- 147 backend tests passing. Do NOT break them.
+- POST /api/command-direct endpoint exists — accepts structured FleetCommand
+  JSON directly, bypassing the LLM. Use this for testing.
 
-Vessel positions are in meters (local frame) converted to lat/lng for display.
-The simulation runs in `src/fleet/fleet_manager.py` FleetManager.step().
-
-The reactive avoidance in `src/navigation/reactive_avoidance.py` only avoids 
-OTHER VESSELS (dynamic obstacles), not static terrain/land.
-
-WHAT NEEDS TO HAPPEN:
-
-1. **Coastline Data**: We need coastline polygon data for the operating area. 
-   Options (recommend one and implement it):
-   - Natural Earth 1:10m coastline (simple, ~5MB shapefile)
-   - OpenStreetMap coastline extract for the local area
-   - A simplified polygon manually defined for the demo area
-   
-2. **Land Check Function**: Create `src/navigation/land_check.py` with:
-   - `is_on_land(x, y) -> bool` — point-in-polygon test
-   - `nearest_water_point(x, y) -> (float, float)` — if on land, find closest water
-   - `check_path_clear(x1, y1, x2, y2) -> bool` — line-segment vs coastline test
-   
-3. **Integration with FleetManager**: In `fleet_manager.py` step(), before 
-   applying vessel dynamics, check if the next position would be on land. 
-   If so, either:
-   - Clamp to the coastline and redirect heading, OR
-   - Add a strong repulsive force (like reactive_avoidance but for land)
-
-4. **Harbor Navigation**: For the demo, vessels start near 42°N, -70°W. 
-   If this is in a harbor or near shore, they need to be able to navigate 
-   out through channels. Consider adding predefined safe waypoints or a 
-   simple A* grid-based path planner for harbor exits.
-
-5. **Dashboard Enhancement**: In `FleetMap.jsx`, optionally render the 
-   coastline polygon as a Leaflet overlay so the operator can see the 
-   no-go zones.
-
-CONSTRAINTS:
-- Keep it lightweight — this is a demo, not a full ENC system
-- Shapely is already likely available via pip, or use a pure-numpy approach
-- The solution must work with the existing meters-based coordinate system
-- Don't break the existing reactive_avoidance (vessel-vessel) system
-
-DELIVERABLES:
-1. Recommended coastline data source + instructions to download
-2. New `src/navigation/land_check.py` module
-3. Modified `fleet_manager.py` with land avoidance integrated
-4. Test that verifies a vessel heading toward land is redirected
-```
-
----
-
-## AUDIT 3: GPS Signal Loss & Dead Reckoning
-**Goal**: Make GPS denied mode actually affect navigation, not just display.
-
-```
-AUDIT TASK: Fix GPS-denied mode so it affects actual navigation, not just display noise.
-
-CONTEXT: The current GPS-denied implementation is COSMETIC ONLY. Here's what 
-happens now:
-
-1. `src/utils/gps_denied.py` — `degrade_position()` adds Gaussian noise to 
-   reported positions. `should_update()` rate-limits updates. These functions 
-   exist but are barely used.
-
-2. `src/fleet/fleet_manager.py` — In `get_fleet_state()` (line ~2716), when 
-   GPS is degraded, noise is added to the REPORTED position sent to the dashboard. 
-   But the ACTUAL vessel state (`v["state"]`) used for navigation is UNAFFECTED.
-
-3. `src/fleet/fleet_manager.py` — In `step()` (line ~2663), the navigation 
-   pipeline reads from `v["state"]` directly with no GPS degradation applied. 
-   This means vessels navigate perfectly even when "GPS denied" is toggled.
-
-4. `src/schemas.py` — `GpsMode` has only FULL and DEGRADED (no DENIED state).
-
-WHAT NEEDS TO CHANGE:
-
-A) **True Dead Reckoning**: When GPS is degraded/denied, the vessel should:
-   - Maintain a separate "estimated_position" that drifts from true position
-   - Use heading + speed integration for position estimation (dead reckoning)
-   - Accumulate drift error over time (maybe 1-2% of distance traveled)
-   - Navigate using the estimated position, NOT the true position
-
-B) **GPS Modes**: Add a DENIED mode to GpsMode enum:
-   - FULL: perfect position, normal navigation
-   - DEGRADED: noisy position (current behavior) + slight nav degradation
-   - DENIED: pure dead reckoning, no GPS corrections, drift accumulates
-
-C) **Signal Recovery**: When GPS is restored (DENIED → FULL):
-   - Show the gap between estimated and true position on the dashboard
-   - Smoothly correct (don't snap) — blend over ~5 seconds
-   - Log the position error at recovery time
-
-D) **Dashboard Indicator**: The `GpsDeniedToggle.jsx` component should show:
-   - Current GPS mode
-   - Accumulated position error (when in DEGRADED/DENIED)
-   - Time since GPS was lost
-
-E) **Demo Scenario**: When filming the demo, the flow should be:
-   1. Start mission with GPS FULL — vessels navigate correctly
-   2. Toggle to DENIED — vessels continue on dead reckoning
-   3. Toggle back to FULL — show that vessels stayed roughly on course 
-      (position error displayed), then smoothly correct
-
-AFFECTED FILES:
-- `src/schemas.py` — add DENIED to GpsMode
-- `src/utils/gps_denied.py` — add dead reckoning logic
-- `src/fleet/fleet_manager.py` — integrate DR into step() and state reporting
-- `dashboard/src/components/GpsDeniedToggle.jsx` — enhance UI
-- `src/api/routes.py` — may need to support DENIED mode
-
-DELIVERABLES:
-1. Modified schemas with DENIED mode
-2. New dead reckoning engine in gps_denied.py
-3. Modified fleet_manager.py that navigates on estimated position when denied
-4. Test showing position drift accumulates when GPS denied, corrects on restore
-```
-
----
-
-## AUDIT 4: Mission Lifecycle & Multi-Vessel Coordination
-**Goal**: Make intercept-and-return-to-base work end-to-end.
-
-```
-AUDIT TASK: Fix the complete mission lifecycle: command → execute → intercept → return to base.
-
-CONTEXT: The demo needs to show:
-1. Operator issues a mission command (NL text or voice)
-2. Multiple vessels + drone execute in formation
-3. Fleet intercepts a target entity
-4. Fleet returns to base
-5. All without hitting land, with proper formation
-
-CURRENT STATE OF EACH COMPONENT:
-
-A) **Command Parsing** (`src/llm/ollama_client.py`):
-   - Uses Ollama (local LLM) to parse NL → FleetCommand
-   - The parse_fleet_command() function exists but may produce hallucinated 
-     waypoints or invalid asset IDs
-   - Need to verify: does it handle "intercept target at position X,Y" correctly?
-   - Need to verify: does it produce valid formation types?
-
-B) **Fleet Commander** (`src/fleet/fleet_commander.py`):
-   - Bridges NL → FleetManager. Looks correct structurally.
-   - `return_to_base()` delegates to fleet_manager.return_to_base()
-
-C) **Fleet Manager** (`src/fleet/fleet_manager.py`):
-   - `dispatch_command()` handles formation offsets correctly for surface vessels
-   - `return_to_base()` sends all vessels back to start positions
-   - BUG: return_to_base uses home positions (0,0), (200,0), (400,0) — these 
-     are the STARTING positions, not necessarily a safe base location
-   - BUG: return_to_base doesn't check for land obstacles on the return path
-
-D) **Formations** (`src/fleet/formations.py`):
-   - Supports ECHELON, LINE_ABREAST, COLUMN, SPREAD
-   - `apply_formation()` rotates offsets by heading — looks correct
-   - BUT: formation is only applied at command dispatch time, not maintained 
-     during transit. Vessels just go to their individual waypoints.
-
-E) **Missing: INTERCEPT mission type**:
-   - `src/schemas.py` MissionType has: PATROL, SEARCH, ESCORT, LOITER, AERIAL_RECON
-   - There is NO "intercept" mission type
-   - Need to add INTERCEPT to MissionType enum
-   - Need corresponding behavior: track toward a moving target
-
-F) **Missing: Target Entity**:
-   - There's no concept of a "target" or "contact" in the fleet system
-   - The CORALL simulation has obstacles (other vessels), but these are separate 
-     from the fleet management layer
-   - Need: a Contact model in schemas.py, tracking in fleet_manager.py
-
-G) **Drone Coordination** (`src/fleet/drone_coordinator.py`):
-   - Orbit, sweep, track, station patterns work
-   - For intercept: drone should switch to TRACK pattern on the target
-
-DELIVERABLES:
-1. Add INTERCEPT mission type to schemas.py
-2. Add Contact/Target model to schemas.py
-3. Implement target tracking in fleet_manager.py
-4. Fix return_to_base to use safe waypoints (not just straight line home)
-5. Add formation maintenance during transit (not just initial positioning)
-6. Test: issue intercept command → vessels converge on target → RTB
-```
-
----
-
-## AUDIT 5: Dashboard — Functional C2 Operations Center
-**Goal**: Make the dashboard a functional command-and-control interface. Every backend 
-capability (intercept, contacts, GPS denied, RTB) must be operable from the dashboard 
-without CLI commands. Information density over aesthetics.
-
-```
-AUDIT TASK: Build a functional C2 dashboard that exposes every backend capability.
-
-DESIGN PRINCIPLE: An operator who has never seen the codebase should be able to:
-spawn a target, order an intercept, watch the fleet converge, hit RTB, toggle GPS 
-denied mid-mission, and understand what's happening the entire time — without typing 
-a single CLI command or reading any code.
-
-CURRENT STATE — WHAT EXISTS:
-- FleetMap.jsx — Leaflet map with vessel/drone markers, trails, GPS uncertainty rings
-- AssetCard.jsx — Status cards per asset (domain, speed, heading, GPS mode, risk)
-- CommandPanel.jsx — Text input + voice button → POST /api/command → LLM parse
-- GpsDeniedToggle.jsx — Toggles FULL ↔ DEGRADED only (DENIED not supported yet)
-- MissionLog.jsx — Event log showing status/mission/GPS changes
-- App.jsx — 70/30 split layout, WebSocket hook, trail accumulation
-- VoiceButton.jsx — Web Audio API recording, 16kHz WAV, POST /api/voice-command
-- useWebSocket.js — Connects to ws://host/ws, streams FleetState at 4Hz
-
-CURRENT STATE — WHAT THE BACKEND STREAMS (FleetState at 4Hz):
-  {
-    timestamp, assets: [AssetState], active_mission, formation, gps_mode,
-    contacts: [Contact]  ← ADDED IN AUDIT 4, DASHBOARD IGNORES IT
-  }
-  AssetState: { asset_id, domain, x, y, heading, speed, altitude, status,
-    mission_type, current_waypoint_index, total_waypoints, risk_level,
-    cpa, tcpa, drone_pattern, gps_mode, position_accuracy }
-  Contact: { contact_id, x, y, heading, speed, domain }
-
-EXISTING API ENDPOINTS (backend already supports all of these):
-  POST /api/command         — NL text → LLM → FleetCommand dispatch
-  POST /api/voice-command   — audio → Whisper → LLM → FleetCommand dispatch
-  POST /api/return-to-base  — recall all assets to home positions
-  POST /api/gps-mode        — set GPS mode {mode, noise_meters, update_rate_hz}
-  GET  /api/contacts        — list active contacts
-  POST /api/contacts        — spawn contact {contact_id, x, y, heading, speed, domain}
-  DELETE /api/contacts/{id} — remove contact
-  GET  /api/assets          — current FleetState (REST fallback)
-  GET  /api/mission         — active mission info + last command
+YOUR TASK: Make the intercept mission predict where a moving contact will be
+when the fleet arrives, and dispatch to THAT point instead of the contact's
+current position.
 
 ────────────────────────────────────────────────────────────────────
-WHAT MUST BE BUILT — PRIORITY ORDER
+THE PROBLEM
 ────────────────────────────────────────────────────────────────────
 
-A) CONTACT MARKERS ON MAP (FleetMap.jsx) — CRITICAL
-   fleetState.contacts[] streams at 4Hz but the map doesn't render them.
-   - Red triangle markers for contacts, distinct from blue vessel markers
-   - Rotate by heading (same as vessel markers)
-   - Popup showing: contact_id, speed, heading, domain
-   - Contact trail lines (red, dashed) — same trail system as vessels
-   - FleetMap needs a new `contacts` prop from App.jsx
+Current intercept behavior (fleet_manager.py dispatch_command(), lines 99-164):
+- Operator says "intercept contact at 3000 1500"
+- Fleet dispatches all vessels to (3000, 1500) — the contact's CURRENT position
+- Contact is moving at 1.5 m/s heading southwest
+- Fleet takes 20+ minutes to arrive at 8 m/s
+- By then, contact has moved ~1800m from dispatch point
+- Fleet arrives at EMPTY WATER
 
-B) RTB BUTTON (new: RTBButton.jsx → wire into App.jsx sidebar)
-   - POST /api/return-to-base on click
-   - Confirm dialog or hold-to-activate (it's a fleet-wide command)
-   - Show "RETURNING" state while active
-   - Place prominently in sidebar — this is an emergency control
-
-C) CONTACT SPAWN PANEL (new: ContactPanel.jsx → wire into App.jsx sidebar)
-   - Input fields: contact_id (default: "bogey-1"), x, y, heading (degrees for
-     UI, convert to radians for API), speed (default 3.0 m/s)
-   - "SPAWN" button → POST /api/contacts
-   - List of active contacts with "REMOVE" button each → DELETE /api/contacts/{id}
-   - Keep it compact — this is a demo setup tool, not the main interface
-
-D) 3-STATE GPS TOGGLE (modify GpsDeniedToggle.jsx)
-   - Current: toggles FULL ↔ DEGRADED
-   - Need: cycle FULL → DEGRADED → DENIED → FULL
-   - Show current mode with color: FULL=green, DEGRADED=amber, DENIED=red
-   - When DENIED: show accumulated drift error from position_accuracy field
-   - POST /api/gps-mode with {mode: "full"/"degraded"/"denied"}
-
-E) MISSION STATUS BAR (new: MissionStatus.jsx → wire into App.jsx)
-   - Horizontal bar at top of sidebar or above map showing:
-     - Active mission type (PATROL, INTERCEPT, etc.) or "NO ACTIVE MISSION"
-     - Formation type
-     - Asset status summary: "3 EXECUTING / 1 IDLE" (count from assets array)
-     - GPS mode indicator with color
-   - Compact single-line or two-line display — not a full panel
-
-F) FLEET-TO-CONTACT TACTICAL INFO (FleetMap.jsx or AssetCard.jsx)
-   - When contacts exist, compute and display:
-     - Distance from each vessel to nearest contact (client-side math)
-     - Bearing from fleet centroid to contact
-   - Show as a line on the map from fleet leader to contact (thin, dotted, white/gray)
-   - Or show in the MissionStatus bar: "TARGET: bogey-1 — 1.2km @ 045°"
-   - This is client-side computation: sqrt((cx-vx)² + (cy-vy)²) for distance,
-     atan2(cy-vy, cx-vx) converted to nautical degrees for bearing
-
-G) COASTLINE OVERLAY (FleetMap.jsx) — NICE TO HAVE
-   The Cape Cod polygon vertices exist in src/navigation/land_check.py as 
-   CAPE_COD_POLYGON_LATLNG (list of [lat, lng] pairs). Options:
-   - Hardcode the polygon coordinates in FleetMap.jsx (simplest — copy the vertices)
-   - Or add a GET /api/coastline endpoint that returns polygon data
-   - Render as a semi-transparent red/brown Leaflet polygon overlay
-   - This gives the operator visual context for where land avoidance activates
-
-H) SCENARIO PRESETS (new: ScenarioPanel.jsx → wire into App.jsx sidebar)
-   Pre-built one-click scenarios that chain existing API calls:
-   - "INTERCEPT DEMO": spawn contact at (2000, 1000) heading west at 3 m/s,
-     then POST /api/command with "All assets intercept contact at 2000 1000 in echelon"
-   - "PATROL DEMO": POST /api/command with "All vessels patrol to 1500 800 in column"
-   - "GPS DENIED DEMO": start patrol, wait 5s, toggle to DENIED
-   - Each preset is just a sequence of fetch() calls to existing endpoints
-   - 2-3 presets max. Keep it simple.
+This looks stupid in a demo. A defense CEO would immediately ask: "why doesn't
+it lead the target?"
 
 ────────────────────────────────────────────────────────────────────
-WHAT NOT TO BUILD
+WHAT TO BUILD
 ────────────────────────────────────────────────────────────────────
 
-- Formation lines between vessels (theatrical — formations applied at dispatch only)
-- Responsive layout optimization (single machine, known resolution)
-- Trail persistence across page reloads (not needed)
-- Click-on-map waypoint editing (future feature)
-- Real-time intercept ETA calculation (future feature)
-- Any backend changes beyond maybe one small coastline API endpoint
+A) INTERCEPT POINT COMPUTATION (new function in fleet_manager.py)
+
+   Create a function that computes the predicted intercept point:
+
+   def compute_intercept_point(fleet_x, fleet_y, fleet_speed,
+                                target_x, target_y, target_heading,
+                                target_speed) -> (float, float):
+
+   The math (iterative proportional navigation):
+   1. Estimate time-to-intercept: T0 = distance / fleet_speed
+   2. Predict target position at T0:
+      pred_x = target_x + target_speed * cos(target_heading) * T0
+      pred_y = target_y + target_speed * sin(target_heading) * T0
+   3. Recalculate distance to predicted position
+   4. New T1 = new_distance / fleet_speed
+   5. Iterate 2-3 times (converges fast)
+   6. Return the predicted intercept point
+
+   This is standard proportional navigation — well-known in missile guidance
+   and maritime interception. 2-3 iterations is sufficient for convergence.
+
+   The fleet centroid is the reference point:
+   fleet_x = mean of all surface vessel x positions
+   fleet_y = mean of all surface vessel y positions
+   fleet_speed = commanded speed from the intercept command (typically 8 m/s)
+
+B) INTEGRATE INTO DISPATCH (modify dispatch_command in fleet_manager.py)
+
+   When mission_type == "intercept" AND self.contacts is not empty:
+   1. Find the target contact (first contact, or closest to the fleet)
+   2. Compute intercept point using the function above
+   3. Replace the commanded waypoints with the intercept point
+   4. Apply formation offsets to the intercept point (existing code)
+   5. Log: "Intercept solution: target at (x,y) moving HDG at SPD,
+      fleet dispatching to predicted position (px, py), ETA ~Ts"
+
+   When there are no contacts (manual coordinate intercept):
+   - Keep current behavior — dispatch to the commanded waypoint as-is
+
+C) CONTINUOUS REPLANNING (modify step() in fleet_manager.py)
+
+   The intercept point drifts as the contact moves. Every N steps (e.g.,
+   every 10 seconds = 40 steps at 4Hz), if the mission is INTERCEPT and
+   contacts exist:
+   1. Recompute the intercept point
+   2. If it has shifted more than 100m from the current waypoint, update
+      the vessel waypoints in-place
+   3. Don't update too frequently — creates heading jitter
+
+   Implementation: add a `_replan_counter` attribute, increment each step(),
+   replan when counter hits threshold. Reset counter on replan.
+
+   CRITICAL: Only update surface vessel waypoints. Drone in TRACK pattern
+   should keep tracking the contact's CURRENT position, not the predicted
+   one — the drone is fast enough (15 m/s) to just follow directly.
+
+D) DASHBOARD — INTERCEPT GEOMETRY (modify FleetMap.jsx)
+
+   When an intercept mission is active and contacts exist:
+   - Draw a thin dotted line from contact to predicted intercept point
+     (shows where the system thinks convergence will happen)
+   - Small circle or crosshair marker at the intercept point (yellow/amber)
+   - This line already partially exists (fleet-to-contact line) — extend it
+
+   The intercept point can be computed client-side using the same math,
+   or the backend can include it in FleetState. Client-side is simpler
+   since it avoids schema changes.
 
 ────────────────────────────────────────────────────────────────────
-TECHNICAL DETAILS
+COORDINATE CONVENTIONS
 ────────────────────────────────────────────────────────────────────
 
-COORDINATE CONVERSION (already in FleetMap.jsx):
-  const ORIGIN_LAT = 42.0, ORIGIN_LNG = -70.0;
-  const metersToLatLng = (x, y) => [
-    ORIGIN_LAT + y / 111320,
-    ORIGIN_LNG + x / 82000
-  ];
-  Contact positions use the same coordinate system (meters from origin).
-
-CONTACT HEADING CONVENTION:
-  Contacts store heading in radians, math convention (0=East, CCW+).
-  For display, convert to nautical: (90 - degrees(heading)) % 360
-  For marker rotation, same conversion as vessel markers.
-
-EXISTING MARKER CREATION (FleetMap.jsx):
-  createAssetIcon(asset) builds an SVG-based Leaflet divIcon. Surface=blue 
-  polygon, Air=cyan double polygon. Contact markers should follow the same 
-  pattern but with red color and a distinct shape (triangle, diamond, or X).
-
-TRAIL SYSTEM (App.jsx):
-  Trails are accumulated in a useRef object: { asset_id: [[x,y], ...] }
-  Max 200 points per asset, minimum 2m movement to add a point.
-  Contact trails should use the same system — add contact_id entries to the 
-  trails ref, render with red dashed polylines.
-
-STYLING:
-  - Dark theme: bg-[#0b0f19], text-gray-300, borders border-gray-700/50
-  - Font: JetBrains Mono
-  - Accent colors: blue (#3b82f6) surface, cyan (#06b6d4) air
-  - Use red (#ef4444) for contacts/threats, amber (#f59e0b) for warnings
-  - All new components should match existing Tailwind class patterns
-
-SIDEBAR LAYOUT (App.jsx):
-  Currently: AssetCards → CommandPanel → GpsDeniedToggle → MissionLog
-  Proposed order:
-    MissionStatus (new, compact)
-    AssetCards
-    ContactPanel (new, collapsible or compact)
-    CommandPanel (existing)
-    RTBButton (new) + ScenarioPanel (new, compact)
-    GpsDeniedToggle (modified for 3 states)
-    MissionLog (existing, at bottom — it's a log, scrolls)
+- All positions in meters (local frame, origin at 42°N, -70°W)
+- Headings in radians, math convention (0=East, CCW+)
+- Contact heading is stored as radians in Contact.heading
+- cos(heading) gives x-component, sin(heading) gives y-component
+- Fleet speed is from AssetCommand.speed (typically 8.0 m/s for surface)
 
 ────────────────────────────────────────────────────────────────────
-FILE LIST
+WHAT NOT TO DO
 ────────────────────────────────────────────────────────────────────
 
-  MODIFY:
-  - dashboard/src/App.jsx — wire new components, pass contacts to FleetMap,
-    add contact trail accumulation
-  - dashboard/src/components/FleetMap.jsx — contact markers, contact trails,
-    optional bearing line, optional coastline overlay
-  - dashboard/src/components/GpsDeniedToggle.jsx — 3-state cycle, DENIED support
+- Do NOT modify schemas.py
+- Do NOT change contact motion model (straight-line is correct for now)
+- Do NOT add pursuit curves or complex guidance laws — simple iterative
+  prediction is sufficient and more understandable
+- Do NOT replan every single step — too much heading jitter. 10s interval.
+- Do NOT change how the drone operates — it's fast enough to just track
 
-  CREATE:
-  - dashboard/src/components/RTBButton.jsx
-  - dashboard/src/components/MissionStatus.jsx
-  - dashboard/src/components/ContactPanel.jsx
-  - dashboard/src/components/ScenarioPanel.jsx (optional, nice-to-have)
+────────────────────────────────────────────────────────────────────
+TEST PLAN
+────────────────────────────────────────────────────────────────────
 
-  MAYBE MODIFY (only if adding coastline endpoint):
-  - src/api/routes.py — GET /api/coastline returning polygon vertices
+Add to tests/test_intercept.py:
+
+1. test_compute_intercept_point_stationary:
+   Contact at (2000, 0) not moving → intercept point IS (2000, 0)
+
+2. test_compute_intercept_point_moving:
+   Fleet at (0, 0) at 8 m/s. Contact at (2000, 0) heading west at 2 m/s.
+   Intercept point should be WEST of (2000, 0) — roughly (1600, 0) area.
+   Verify intercept_x < 2000.
+
+3. test_intercept_dispatch_uses_prediction:
+   Spawn contact moving west. Dispatch intercept. Verify vessel waypoints
+   are NOT at the contact's current position — they should be ahead of it.
+
+4. test_intercept_replan_updates_waypoints:
+   Dispatch intercept. Run 100 steps. Verify waypoints have shifted from
+   original dispatch point (replan triggered).
+
+5. test_fleet_converges_on_moving_target:
+   Integration test: spawn contact at (5000, 2000) heading SW at 1.5 m/s.
+   Dispatch intercept at 8 m/s. Run 1500 steps (~375s). Verify at least
+   one surface vessel is within 500m of the contact's current position.
+   This is the "did they actually meet?" test.
+
+Run: .venv/bin/python -m pytest tests/ -v (expect 147 + new tests passing)
 
 ────────────────────────────────────────────────────────────────────
 DELIVERABLES
 ────────────────────────────────────────────────────────────────────
 
-  1. Contact markers visible on map with trails
-  2. RTB button functional
-  3. Contact spawn/remove panel functional
-  4. GPS toggle supports FULL → DEGRADED → DENIED
-  5. Mission status bar showing active mission + asset summary
-  6. Fleet-to-contact distance/bearing (on map or in status bar)
-  7. Coastline overlay (if time permits)
-  8. Scenario presets (if time permits)
-  9. Start the dashboard (cd dashboard && pnpm dev) and backend
-     (.venv/bin/python -m uvicorn src.api.server:app) to verify
-     everything renders. Run Python tests to confirm no regressions.
-  10. Commit when done.
+1. compute_intercept_point() function in fleet_manager.py
+2. dispatch_command() uses prediction when mission is INTERCEPT + contacts exist
+3. step() replans every ~10s when INTERCEPT mission active
+4. Dashboard shows predicted intercept point on map
+5. 5 new tests in test_intercept.py
+6. Run full test suite — no regressions
+7. Commit when done
 
-EXISTING TEST COUNT: 147 tests passing as of Audit 3 completion.
+DEMO VERIFICATION:
+After implementation, run this sequence via curl:
+  1. POST /api/contacts — spawn bogey-1 at (8000, 4000) heading -2.356 (SW) at 1.5 m/s
+  2. POST /api/command-direct — intercept with all assets at 8 m/s
+  3. Watch dashboard — fleet should head to a point AHEAD of the contact,
+     not to (8000, 4000)
+  4. After 10-15 minutes, fleet and contact should converge
 ```
 
 ---
 
-## AUDIT 6: Vessel Timing, Speed & Trajectory — Figure-8s, Wide Loops, Sluggish Turns
-**Goal**: Fix why vessels make wide loops/figure-8 patterns, travel in the wrong direction for 20+ seconds before correcting, and take unreasonably long to reach destinations.
+## AUDIT 9: Autonomous Threat Response — Auto-Detect and Propose
+**Goal**: When a contact enters detection range, the fleet automatically detects it, the drone re-tasks to track, and the system proposes a response to the operator. This is "human-on-the-loop" autonomy.
 
 ```
-AUDIT TASK: Fix vessel turn dynamics so they don't loop, figure-8, or travel 
-the wrong direction for extended periods during missions and return-to-base.
+Execute Audit 9 — Autonomous Threat Response for the LocalFleet project.
 
-CONTEXT: After fixing the waypoint completion bug (Audit 1), vessels now 
-correctly reach IDLE status — but their TRAJECTORIES are terrible. They make 
-wide arcs, travel the wrong direction for 20+ seconds, and trace figure-8 
-patterns visible on the dashboard. The root causes are in the physics chain:
+Read CLAUDE.md first. Then read docs/localfleet_audit_plan.md — focus on AUDIT 9.
 
-The full navigation + physics pipeline per tick (dt=0.25s) is:
+COMPLETED AUDITS: Audits 1-8 complete. Predictive intercept working.
+147+ tests passing. Do NOT break them.
 
-1. `src/navigation/planning.py` — `planning()` computes desired heading (psi_p) 
-   using cross-track error correction. Look-ahead: rho = 2200/1852 ≈ 1.19 NMI.
-   Waypoint acceptance: Circ = 200/1852 NMI ≈ 108 meters.
+YOUR TASK: Make the fleet automatically detect contacts and propose a response,
+without requiring the operator to manually issue an intercept command.
 
-2. `src/dynamics/controller.py` — PID: kp=100, kd=-500, ki=0. Computes yaw 
-   torque tau_c from heading error e_psi = psi_p - psi (NO ANGLE WRAPPING).
+────────────────────────────────────────────────────────────────────
+THE PROBLEM
+────────────────────────────────────────────────────────────────────
 
-3. `src/dynamics/actuator_modeling.py` — Hard-clamps tau_c to ±20 (SAT_AMP=20).
+Currently, contacts are invisible to the fleet's decision-making. A contact
+can be 100m away and the fleet will ignore it unless the operator types
+"intercept." There is zero autonomous awareness.
 
-4. `src/dynamics/vessel_dynamics.py` — Nomoto model:
-   - k_psi = 0.01 (rudder gain), t_psi = 30.0s (yaw time constant)
-   - Max steady-state yaw rate: r_ss = k_psi × SAT_AMP = 0.2 rad/s ≈ 11.5°/s
-   - 180° turn takes ~16 seconds minimum
-   - Random yaw bias: w_b = 0.5 × randn() EVERY tick (accumulates via t_b=600s)
-   - CRITICAL: x_dot = u_c × cos(psi) — uses COMMANDED speed, not actual speed 
-     state. Vessel moves at full 5 m/s instantly, even while turning 180°.
+The decision_making.py module has a COLREG classifier (decision_making()
+function) that is NEVER CALLED — it's dead code. The reactive_avoidance.py
+module has fuzzy obstacle avoidance that is ONLY called by the legacy
+simulation.py, NOT by fleet_manager.py.
 
-5. `src/core/integration.py` — Euler integration: x_new = x + x_dot × dt
+A defense tech CEO's first question: "What happens if a threat appears and
+the operator doesn't respond?" The answer should NOT be "nothing."
 
-6. `src/fleet/fleet_manager.py:141` — step() runs this chain every 0.25s.
+────────────────────────────────────────────────────────────────────
+WHAT TO BUILD
+────────────────────────────────────────────────────────────────────
 
-MEASURED BEHAVIOR FROM DIAGNOSTIC RUNS:
+A) THREAT DETECTION ENGINE (new file: src/fleet/threat_detector.py)
 
-Return-to-base from (500, 300) to home (0, 0) — distance 583m:
-- Step 0:   vessel at (501, 301), heading 29° (NE) — home is SW
-- Step 80:  vessel at (595, 313), heading 326° — went 100m the WRONG WAY
-- Step 160: vessel at (583, 236), heading 197° — finally pointing homeward
-- Step 509: IDLE at (180, 88) — took 127 seconds, traced a VISIBLE LOOP
+   Create a module that evaluates contacts relative to the fleet:
 
-The initial loop pattern IS the figure-8 the user sees on screen.
+   class ThreatAssessment:
+       contact_id: str
+       distance: float          # meters from fleet centroid
+       bearing: float           # radians from fleet centroid to contact
+       closing_rate: float      # m/s — negative means closing
+       threat_level: str        # "none", "detected", "warning", "critical"
+       recommended_action: str  # "monitor", "track", "intercept"
+       reason: str              # human-readable explanation
 
-KNOWN ISSUES — FIX ALL OF THESE:
+   def assess_threats(vessels: dict, contacts: dict) -> List[ThreatAssessment]:
+       """Evaluate all contacts against fleet position."""
 
-A) HEADING ANGLE WRAPPING BUG (CRITICAL — causes wrong-direction turns):
-   In `src/dynamics/controller.py` line 31: `e_psi = psi_p - psi`
-   This has NO angle wrapping. When psi_p = -170° and psi = +170°, the 
-   error computes as -340° instead of +20°. The vessel turns 340° the LONG 
-   way instead of 20° the SHORT way.
-   
-   FIX: Wrap e_psi to [-pi, pi]:
-   ```python
-   e_psi = psi_p - psi
-   e_psi = (e_psi + np.pi) % (2 * np.pi) - np.pi  # wrap to [-pi, pi]
-   ```
-   This requires `import numpy as np` at the top of controller.py.
+   Detection ranges (thresholds):
+   - > 8000m: "none" — not detected, no action
+   - 5000-8000m: "detected" — long-range detection, recommend "monitor"
+   - 2000-5000m: "warning" — closing, recommend "track" (re-task drone)
+   - < 2000m: "critical" — close range, recommend "intercept"
 
-B) NO SPEED REDUCTION DURING LARGE HEADING ERRORS (causes wide arcs):
-   The vessel moves at full commanded speed (5 m/s) even when the heading 
-   error is 90° or 180°. At 5 m/s with a 16-second turn, it covers 80m+ 
-   in the wrong direction.
-   
-   FIX in `src/fleet/fleet_manager.py` step(), after computing psi_desired 
-   and before calling controller():
-   ```python
-   # Reduce speed when turning hard to prevent wide arcs
-   heading_err = abs((psi_desired - state[2] + np.pi) % (2 * np.pi) - np.pi)
-   speed_scale = max(0.3, 1.0 - 0.7 * heading_err / np.pi)
-   effective_speed = v["desired_speed"] * speed_scale
-   ```
-   Then pass effective_speed to controller() instead of v["desired_speed"].
-   This makes vessels slow to 30% speed during 180° turns (tight arcs) 
-   and full speed when heading is correct.
+   Closing rate computation:
+   - Compute fleet centroid (mean of surface vessel positions)
+   - Current distance to contact
+   - Project contact position 1s forward using its heading/speed
+   - closing_rate = current_distance - projected_distance (positive = opening)
 
-C) RANDOM YAW BIAS NOISE IS TOO AGGRESSIVE (causes persistent drift):
-   In `src/dynamics/vessel_dynamics.py` line 31: `w_b = 0.5 * np.random.randn()`
-   This injects fresh random noise EVERY 0.25s tick. The bias state b has a 
-   600-second time constant, so noise accumulates into persistent heading drift 
-   of 10-15m over a 160-second mission.
-   
-   FIX: Either:
-   - Reduce magnitude: `w_b = 0.1 * np.random.randn()` (still realistic, less disruptive)
-   - Or scale by sqrt(dt): `w_b = 0.5 * np.sqrt(dt) * np.random.randn()` (physically correct)
-   - Or remove entirely for deterministic behavior: `w_b = 0.0`
-   Recommendation: reduce to 0.1 — keeps some realism without wrecking trajectories.
+   The reason field should be human-readable:
+   "bogey-1 detected at 6.2km bearing 045°, closing at 3.1 m/s"
+   "bogey-1 CRITICAL at 1.8km bearing 032°, closing at 4.2 m/s — INTERCEPT recommended"
 
-D) WAYPOINT ACCEPTANCE CIRCLE MAY BE TOO LARGE FOR SHORT MISSIONS:
-   Circ = 200/1852 NMI ≈ 108 meters. For harbor patrols with waypoints 
-   200-400m apart, the vessel "arrives" when still 108m away and skips ahead.
-   
-   FIX in `src/navigation/planning.py`: Reduce to 50m:
-   `Circ = 50/1852`
-   Or make it configurable — but 50m is a reasonable default for this sim.
+B) AUTO-RESPONSE IN FLEET MANAGER (modify step() in fleet_manager.py)
 
-E) CROSS-TRACK ERROR CORRECTION CAUSES OSCILLATION NEAR WAYPOINTS:
-   In `planning()`, rho = 2200/1852 ≈ 1.19 NMI (2200m look-ahead). When 
-   the vessel is within a few hundred meters of the waypoint, the cross-track 
-   correction can flip sign rapidly, causing heading wobble.
-   
-   FIX: When distance to waypoint is small (< 500m), switch to pure pursuit 
-   (just steer directly toward the waypoint, ignore cross-track):
-   ```python
-   dist_to_wpt = np.sqrt(Xewpt**2 + Yewpt**2)
-   if dist_to_wpt < 500/1852:  # within 500m, use pure pursuit
-       psi_p = np.arctan2(Yewpt, Xewpt)
-   else:
-       # existing cross-track correction
-       ...
-   ```
+   In step(), after updating contacts (lines 231-234), call assess_threats().
+   Store the result in self.threat_assessments (list of ThreatAssessment).
 
-F) VESSEL DYNAMICS USES u_c FOR POSITION INSTEAD OF u STATE:
-   `x_dot = u_c * cos(psi)` means position updates use the commanded speed 
-   input directly, not the actual velocity state u (which has a 50-second 
-   ramp-up time constant). The u state is computed but NEVER affects position.
-   This means vessels have zero speed dynamics — they instantly move at 
-   commanded speed. This is inconsistent and confusing.
-   
-   FIX: Either use u for position (realistic speed ramp):
-   `x_dot = u * np.cos(psi)` and `y_dot = u * np.sin(psi)`
-   Or document the current behavior as intentional and accept instant speed.
-   Recommendation: keep u_c for now (instant speed is fine for demos) but 
-   be aware this is why "speed" in the state display ramps up slowly while 
-   the vessel is already moving at full speed.
+   AUTO-ACTIONS based on threat level (these happen WITHOUT operator command):
 
-TIMING REFERENCE TABLE (post-fix expected values):
-| Distance | Speed | Expected Time | Notes |
-|----------|-------|---------------|-------|
-| 200m     | 5 m/s | ~40-50s       | Including initial turn alignment |
-| 500m     | 5 m/s | ~100-110s     | ~1.7 minutes |
-| 1000m    | 5 m/s | ~200-210s     | ~3.3 minutes |
-| 2000m    | 5 m/s | ~400-420s     | ~6.7 minutes |
-| 180° turn| any   | ~5-8s         | With heading wrapping fix, much tighter |
-| RTB 500m | 5 m/s | ~100-120s     | Should NOT loop — direct path |
+   1. "detected" → No auto-action. Just record assessment.
 
-DELIVERABLES:
-1. Fix heading wrapping in controller.py (Issue A) — MOST IMPORTANT
-2. Add speed scaling during turns in fleet_manager.py step() (Issue B)
-3. Reduce yaw bias noise in vessel_dynamics.py (Issue C)
-4. Reduce waypoint acceptance circle in planning.py (Issue D)
-5. Add pure pursuit fallback near waypoints in planning.py (Issue E)
-6. Add these trajectory tests to tests/test_fleet_manager.py:
-   a) test_vessel_does_not_overshoot_on_uturn: vessel at heading 0° targeting 
-      waypoint at 180° should NOT travel more than 100m in the wrong direction 
-      before correcting course
-   b) test_return_to_base_no_loop: vessel 500m from home should return in under 
-      150 seconds without its trajectory exceeding 150% of the straight-line distance
-   c) test_vessel_straight_line_accuracy: vessel navigating 1000m in a straight 
-      line should stay within 30m of the ideal path (lateral deviation)
+   2. "warning" → If drone is IDLE or in a non-TRACK pattern, automatically
+      re-task drone to TRACK the contact:
+      - Use DroneCoordinator.assign_pattern(TRACK, [contact_position], altitude=100)
+      - Set drone status to EXECUTING
+      - Log: "AUTO: Eagle-1 re-tasked to TRACK bogey-1 (warning range)"
+      - Do NOT auto-task surface vessels — only the drone responds automatically
 
-FILES TO MODIFY:
-- `src/dynamics/controller.py` — heading wrapping (Issue A)
-- `src/fleet/fleet_manager.py` — speed scaling during turns (Issue B)
-- `src/dynamics/vessel_dynamics.py` — yaw bias noise (Issue C)
-- `src/navigation/planning.py` — acceptance circle + pure pursuit fallback (Issues D, E)
-- `tests/test_fleet_manager.py` — three new trajectory tests
-```
+   3. "critical" → Same as warning (drone tracks), PLUS set a flag:
+      self.intercept_recommended = True
+      self.recommended_target = contact_id
+      This flag is read by the dashboard to show a recommendation.
+      The operator must still click a button to dispatch the fleet.
 
----
+   IMPORTANT: Auto-response should NOT override an active mission. If the
+   fleet is already EXECUTING an intercept, don't re-task the drone.
+   Only auto-respond when the fleet is IDLE or on a non-intercept mission.
 
-## AUDIT 7: LLM Command Quality & Waypoint Validation
-**Goal**: Ensure the Ollama LLM produces correct, safe, and consistent FleetCommands from natural language input.
+C) THREAT ASSESSMENTS IN FLEET STATE (modify get_fleet_state())
 
-```
-AUDIT TASK: Audit and harden the LLM command parsing pipeline so that 
-natural language commands reliably produce valid, safe fleet commands.
+   Add threat assessment data to the WebSocket stream. Since we can't modify
+   schemas.py, add it as a dict field that gets serialized:
 
-CONTEXT: The LLM pipeline is:
-1. User types/speaks a command (e.g., "All vessels patrol the harbor in echelon")
-2. `src/llm/ollama_client.py` — parse_fleet_command() sends NL text to Ollama 
-   with a system prompt and Pydantic schema enforcement. Model: Qwen 2.5 72B.
-3. Ollama returns structured JSON matching FleetCommand.model_json_schema()
-4. Pydantic validates the response into a FleetCommand object
-5. `src/fleet/fleet_commander.py` — handle_command() calls parse_fleet_command() 
-   then dispatches the result to FleetManager
+   In get_fleet_state(), after building the FleetState:
+   - Add threat_assessments to the response dict (as extra JSON)
+   - Include: [{contact_id, distance, bearing_deg, closing_rate, threat_level,
+     recommended_action, reason}]
+   - Include: intercept_recommended (bool), recommended_target (str or null)
 
-THE SYSTEM PROMPT (in ollama_client.py) tells the LLM:
-- Fleet roster: alpha, bravo, charlie (surface), eagle-1 (air)
-- Waypoints in meters, range 0-2000
-- Speed: surface 3-8 m/s, drone 10-20 m/s
-- Pick best mission type from: patrol, search, escort, loiter, aerial_recon
-- Has 1 example command
+   Use FleetState's model_dump() then inject the extra fields before return.
+   Or add these as Optional fields to FleetState if that's cleaner without
+   violating the schema-stability rule (check if adding Optional fields with
+   defaults is considered "modifying" schemas — it shouldn't break anything).
 
-KNOWN ISSUES TO INVESTIGATE AND FIX:
+D) DASHBOARD — THREAT OVERLAY (modify multiple dashboard files)
 
-A) WAYPOINT VALIDATION — NO BOUNDS CHECKING:
-   The LLM can generate waypoints at ANY coordinate. The system prompt says 
-   "range 0-2000" but Pydantic doesn't enforce this. The LLM could produce:
-   - Negative coordinates (behind the fleet)
-   - Coordinates at 50000+ meters (off the map entirely)
-   - Coordinates at 0,0 (on top of the starting position)
-   - NaN or extremely large floats
-   
-   FIX: Add post-parse validation in fleet_commander.py or ollama_client.py:
-   ```python
-   MAX_RANGE = 5000  # meters — reasonable operating area
-   for asset_cmd in command.assets:
-       for wp in asset_cmd.waypoints:
-           wp.x = max(-MAX_RANGE, min(MAX_RANGE, wp.x))
-           wp.y = max(-MAX_RANGE, min(MAX_RANGE, wp.y))
-   ```
-   Also validate: speed clamping (1-25 m/s), altitude clamping (10-500m for air),
-   and reject commands with zero waypoints for EXECUTING assets.
+   1. FleetMap.jsx:
+      - Color-code contact markers by threat level:
+        none=gray, detected=yellow, warning=orange, critical=red (pulsing)
+      - Detection range ring: faint circle at 8000m around fleet centroid
+      - Warning range ring: amber circle at 5000m
+      - Critical range ring: red circle at 2000m
+      - Only show rings when contacts exist (don't clutter empty map)
 
-B) ASSET ID HALLUCINATION:
-   The LLM might produce asset_ids that don't exist ("delta", "eagle-2", 
-   "drone-1"). Pydantic won't catch this because asset_id is just a str field.
-   The fleet_manager.py dispatch_command() silently ignores unknown surface IDs 
-   (line 96: `if ac.asset_id in self.vessels`) and unknown drone IDs (line 120: 
-   `if ac.asset_id == self.drone.asset_id`). This means a hallucinated ID causes 
-   that asset to do NOTHING with no error feedback.
-   
-   FIX: In fleet_commander.py, after parsing, check all asset IDs are valid:
-   ```python
-   VALID_IDS = {"alpha", "bravo", "charlie", "eagle-1"}
-   invalid = [ac.asset_id for ac in command.assets if ac.asset_id not in VALID_IDS]
-   if invalid:
-       # Log warning and filter out invalid assets
-   ```
+   2. MissionStatus.jsx:
+      - When threat_level is "warning" or "critical", show alert:
+        "⚠ THREAT: bogey-1 — 3.2km @ 045° CLOSING 4.1 m/s"
+      - When intercept_recommended is true, show a prominent
+        "INTERCEPT RECOMMENDED" indicator
 
-C) SYSTEM PROMPT HAS ONLY 1 EXAMPLE:
-   The LLM has a single example in the system prompt. For a 72B model with 
-   schema enforcement, this may be sufficient for simple commands, but complex 
-   or ambiguous commands will produce inconsistent results.
-   
-   FIX: Add 3-4 more examples covering edge cases:
-   - Voice-style command: "Send alpha and bravo to patrol around 800 600"
-   - Drone-only command: "Eagle one, orbit over position 500 300 at 200 meters"
-   - RTB-adjacent: "All vessels move to 100 100" (should still be a valid mission)
-   - Ambiguous: "Search the northern area" (LLM must generate reasonable waypoints)
-   
-   Also add negative examples (what NOT to produce):
-   - "Do NOT create asset IDs that aren't in the roster"
-   - "Do NOT set surface vessel altitude"
-   - "If the user says 'drone', they mean eagle-1"
+   3. New: InterceptButton in ContactPanel.jsx or as standalone
+      - When intercept_recommended is true, show a pulsing red button:
+        "INTERCEPT bogey-1"
+      - On click: POST /api/command-direct with an intercept command
+        using the recommended target's position
+      - This is the "human approves" step in human-on-the-loop autonomy
 
-D) NO TIMEOUT ON LLM CALL:
-   The `chat()` call in ollama_client.py has no explicit timeout. On a 72B model, 
-   inference takes 5-15 seconds normally, but could hang for 60+ seconds if the 
-   model gets stuck or Ollama has issues.
-   
-   FIX: Add timeout handling. The ollama Python library's chat() function may 
-   not support a direct timeout parameter. Wrap it with asyncio.wait_for() 
-   or use a threading-based timeout:
-   ```python
-   import signal
-   
-   class TimeoutError(Exception):
-       pass
-   
-   def _timeout_handler(signum, frame):
-       raise TimeoutError("LLM inference timed out")
-   
-   # In parse_fleet_command:
-   signal.signal(signal.SIGALRM, _timeout_handler)
-   signal.alarm(30)  # 30 second timeout
-   try:
-       response = chat(...)
-   finally:
-       signal.alarm(0)
-   ```
-   Or use the httpx-based approach with a timeout parameter if calling 
-   the Ollama HTTP API directly.
+   4. MissionLog.jsx:
+      - Log auto-actions: "AUTO: Eagle-1 tracking bogey-1 (warning range)"
+      - Log threat level changes: "THREAT: bogey-1 escalated to CRITICAL"
 
-E) VOICE TRANSCRIPTION MISMATCHES:
-   mlx-whisper may transcribe "Eagle-1" as "Eagle One", "Eagle 1", "eagle one", 
-   or "eagle-one". The system prompt should explicitly list these variations:
-   "If the user says 'eagle', 'eagle one', 'eagle 1', or 'eagle-1', the 
-   asset_id is always 'eagle-1'"
-   
-   Similarly: "alpha" might be transcribed as "Alpha", "alfa", or "Alfa".
-   Add normalization in the system prompt or as a pre-processing step.
+────────────────────────────────────────────────────────────────────
+WHAT NOT TO DO
+────────────────────────────────────────────────────────────────────
 
-F) NO FEEDBACK ON PARTIAL FAILURES:
-   If the LLM produces a command where 2 of 3 assets are valid but 1 has a 
-   hallucinated ID, the response still shows success=True. The user never 
-   knows that one asset was silently ignored.
-   
-   FIX: In fleet_commander.py, after dispatch, return a summary of which 
-   assets were actually activated. The CommandResponse schema has an 
-   Optional[str] error field that could hold warnings.
+- Do NOT auto-dispatch surface vessels — only the drone auto-responds.
+  Surface vessel intercept requires operator approval (the button).
+- Do NOT modify the contact motion model
+- Do NOT add complex threat classification (friend/foe) — all contacts
+  are threats for now
+- Do NOT run threat detection every single step — every 1-2 seconds
+  (4-8 steps) is sufficient
+- Do NOT break existing intercept flow — manual "intercept" commands
+  must still work exactly as before
 
-G) RETRY LOGIC DOESN'T VARY THE PROMPT:
-   parse_fleet_command() retries 3 times on failure, but sends the EXACT 
-   same messages each time. If the LLM consistently fails on a particular 
-   input, retrying identically won't help.
-   
-   FIX: On retry, slightly modify the prompt — e.g., add "Please ensure 
-   your response is valid JSON matching the schema exactly." or increase 
-   temperature slightly on retry.
+────────────────────────────────────────────────────────────────────
+TEST PLAN
+────────────────────────────────────────────────────────────────────
 
-DELIVERABLES:
-1. Add waypoint bounds clamping after LLM parse (Issue A)
-2. Add asset ID validation with warning (Issue B)
-3. Expand system prompt with 3-4 more examples (Issue C)
-4. Add timeout protection on LLM inference (Issue D)
-5. Add voice transcription aliases for asset names (Issue E)
-6. Return dispatch summary showing which assets were activated (Issue F)
-7. Improve retry logic with prompt variation (Issue G)
-8. Add tests:
-   a) test_waypoint_clamping: verify out-of-range waypoints are clamped
-   b) test_invalid_asset_id_filtered: verify hallucinated IDs are caught
-   c) test_parse_timeout: verify timeout triggers after N seconds (mock)
+New file: tests/test_threat_detector.py
 
-FILES TO MODIFY:
-- `src/llm/ollama_client.py` — system prompt examples, timeout, retry logic
-- `src/fleet/fleet_commander.py` — waypoint validation, asset ID check, dispatch summary
-- `tests/test_fleet_commander.py` — new validation tests
-- `tests/test_ollama_client.py` — new edge case tests (can mock Ollama)
+1. test_no_contacts_no_threats:
+   No contacts → empty threat assessment list
+
+2. test_contact_out_of_range:
+   Contact at 10000m → threat_level "none"
+
+3. test_contact_detected_range:
+   Contact at 6000m → threat_level "detected", action "monitor"
+
+4. test_contact_warning_range:
+   Contact at 3000m → threat_level "warning", action "track"
+
+5. test_contact_critical_range:
+   Contact at 1500m → threat_level "critical", action "intercept"
+
+6. test_closing_rate_computation:
+   Contact heading toward fleet → closing_rate is negative (closing)
+   Contact heading away → closing_rate is positive (opening)
+
+7. test_auto_drone_retask_on_warning:
+   Fleet idle, contact enters warning range → drone pattern changes to TRACK
+
+8. test_no_auto_retask_during_active_mission:
+   Fleet executing intercept → drone NOT re-tasked on new contact warning
+
+9. test_intercept_recommended_flag:
+   Contact at critical range → fleet_manager.intercept_recommended is True
+
+10. test_threat_in_fleet_state:
+    Spawn contact at 3000m → get_fleet_state() includes threat assessment data
+
+Run: .venv/bin/python -m pytest tests/ -v
+
+────────────────────────────────────────────────────────────────────
+DELIVERABLES
+────────────────────────────────────────────────────────────────────
+
+1. src/fleet/threat_detector.py — ThreatAssessment + assess_threats()
+2. fleet_manager.py — threat detection in step(), auto-drone retask
+3. fleet_manager.py — threat data in get_fleet_state()
+4. Dashboard — threat-colored contacts, range rings, intercept recommendation
+5. 10 new tests
+6. Full test suite passes — no regressions
+7. Commit when done
+
+DEMO STORY:
+  Fleet is idle at base. Contact spawned at 9000m. Dashboard shows "detected"
+  (yellow marker). Contact closes. At 5000m, drone auto-launches to track
+  (cyan trail toward red marker). At 2000m, dashboard flashes
+  "INTERCEPT RECOMMENDED" with a red button. Operator clicks it. Fleet
+  dispatches with predictive intercept. All without typing a single command.
 ```
 
 ---
 
-## AUDIT 1 STATUS UPDATE (Post-Fix Notes)
+## AUDIT 10: Comms-Denied Autonomous Behavior
+**Goal**: When communications are denied, the fleet continues operating on pre-briefed behaviors instead of going dead. The `comms_lost_behavior` field already exists in FleetCommand but is never triggered.
 
-Audit 1 was partially completed in a prior session. Here's what was fixed and 
-what remains:
+```
+Execute Audit 10 — Comms-Denied Autonomy for the LocalFleet project.
 
-**FIXED (committed or staged):**
-- `src/navigation/planning.py` — waypoint_selection() now advances i_wpt past 
+Read CLAUDE.md first. Then read docs/localfleet_audit_plan.md — focus on AUDIT 10.
+
+COMPLETED AUDITS: Audits 1-9 complete. Predictive intercept + auto threat
+response working. 147+ tests passing. Do NOT break them.
+
+YOUR TASK: Add a COMMS DENIED mode where the operator loses the ability to
+send commands, but the fleet continues operating autonomously on last orders.
+
+────────────────────────────────────────────────────────────────────
+THE PROBLEM
+────────────────────────────────────────────────────────────────────
+
+GPS-denied simulates losing satellite navigation. But in contested
+environments, the MORE likely failure is COMMUNICATIONS denial — the
+operator can't reach the fleet at all. Jamming, distance, terrain.
+
+The FleetCommand schema already has: comms_lost_behavior = "return_to_base"
+This field is stored but NEVER READ or ACTED ON by any code.
+
+Currently if you "deny comms" there's no mechanism for it — the WebSocket
+just keeps streaming. There's no simulation of command link loss.
+
+For a defense demo, this is the money shot: "I jam comms, and the fleet
+keeps operating." It shows the system doesn't need a human in the loop
+for every decision.
+
+────────────────────────────────────────────────────────────────────
+WHAT TO BUILD
+────────────────────────────────────────────────────────────────────
+
+A) COMMS MODE STATE (add to fleet_manager.py)
+
+   Add a comms_mode attribute: "full" or "denied"
+   Add a comms_denied_since timestamp (or None)
+   Add a comms_denied_timeout: float = 300.0 (5 minutes default)
+
+   When comms_mode == "denied":
+   - POST /api/command and POST /api/command-direct should return
+     {"success": false, "error": "COMMS DENIED — fleet operating autonomously"}
+   - POST /api/return-to-base should also be blocked
+   - The fleet continues executing whatever it was doing
+   - Contact spawn/remove should still work (that's a sim control, not C2)
+   - GPS mode changes should still work (that's environmental, not C2)
+
+B) AUTONOMOUS BEHAVIORS WHEN COMMS DENIED (modify step() in fleet_manager.py)
+
+   When comms_mode == "denied", the fleet executes pre-briefed logic:
+
+   1. IF fleet has an active mission → CONTINUE executing it
+      - Intercept: keep navigating to intercept point (with replanning)
+      - Patrol: keep following waypoints
+      - Any mission: continue as normal
+
+   2. IF fleet is IDLE when comms are denied → execute comms_lost_behavior
+      - "return_to_base" (default): call self.return_to_base()
+      - "hold_position": set all vessels to LOITER at current position
+      - "continue_mission": do nothing, wait for comms restore
+
+   3. IF comms denied for longer than comms_denied_timeout (300s) AND
+      fleet is still executing a mission → switch to comms_lost_behavior
+      - This simulates "mission complete but can't report back, fall back
+        to standing orders"
+      - When vessels reach IDLE after mission waypoints exhausted, trigger
+        comms_lost_behavior
+
+   4. THREAT RESPONSE still operates autonomously (from Audit 9)
+      - Drone auto-tracks on warning range
+      - But intercept_recommended flag has no one to click it
+      - Add: if comms_denied AND intercept_recommended AND
+        comms_denied_timeout has elapsed → auto-dispatch intercept
+        (this is the "fully autonomous" escalation)
+
+C) API ENDPOINT (add to routes.py)
+
+   POST /api/comms-mode
+   Body: { "mode": "full" | "denied" }
+   Response: { "comms_mode": "full"|"denied" }
+
+   When switching to denied:
+   - Record timestamp
+   - Block command endpoints
+   - Fleet continues on autopilot
+
+   When switching back to full:
+   - Log "COMMS RESTORED — X seconds denied"
+   - Resume normal command acceptance
+
+D) COMMS STATE IN FLEET STATE (modify get_fleet_state())
+
+   Include in WebSocket stream:
+   - comms_mode: "full" | "denied"
+   - comms_denied_duration: float (seconds since denial, or 0)
+   - autonomous_action: str | null (what the fleet is doing on its own)
+
+E) DASHBOARD — COMMS DENIED OVERLAY
+
+   1. New toggle: CommsDeniedToggle.jsx (or extend GpsDeniedToggle)
+      - Button to toggle comms mode
+      - POST /api/comms-mode on click
+      - Colors: FULL=green, DENIED=red
+
+   2. When comms denied:
+      - Header bar turns red/amber with "COMMS DENIED" flashing
+      - CommandPanel input is disabled with overlay: "COMMS DENIED"
+      - RTB button is disabled with same overlay
+      - MissionStatus shows: "AUTONOMOUS — [executing last orders]"
+      - Timer showing duration of comms denial
+
+   3. When comms restored:
+      - Brief green flash "COMMS RESTORED"
+      - All controls re-enabled
+      - MissionLog entry: "COMMS RESTORED after Xs"
+
+────────────────────────────────────────────────────────────────────
+WHAT NOT TO DO
+────────────────────────────────────────────────────────────────────
+
+- Do NOT actually disconnect the WebSocket — the operator can still
+  OBSERVE the fleet (imagine a separate sensor feed), they just can't
+  COMMAND it. The C2 link is denied, not the surveillance link.
+- Do NOT modify schemas.py
+- Do NOT make comms denial affect GPS mode — they are independent failures
+- Do NOT make autonomous intercept happen instantly — there should be a
+  delay (the timeout) before fully autonomous escalation
+- Do NOT change existing command dispatch logic — just gate it behind
+  comms_mode check
+
+────────────────────────────────────────────────────────────────────
+TEST PLAN
+────────────────────────────────────────────────────────────────────
+
+New file: tests/test_comms_denied.py
+
+1. test_comms_denied_blocks_commands:
+   Set comms denied → attempt command dispatch → verify blocked with error
+
+2. test_comms_denied_fleet_continues_mission:
+   Start patrol → set comms denied → run 100 steps → verify fleet still
+   EXECUTING (not stopped)
+
+3. test_comms_denied_idle_triggers_rtb:
+   Fleet idle → set comms denied → run 10 steps → verify fleet RETURNING
+
+4. test_comms_denied_timeout_triggers_fallback:
+   Fleet executing → set comms denied → run enough steps to exceed timeout
+   → verify comms_lost_behavior triggered
+
+5. test_comms_restored_accepts_commands:
+   Set comms denied → restore → attempt command → verify accepted
+
+6. test_comms_denied_contacts_still_work:
+   Set comms denied → spawn contact → verify contact appears
+
+7. test_comms_denied_in_fleet_state:
+   Set comms denied → get_fleet_state() includes comms_mode and duration
+
+8. test_comms_denied_duration_tracks:
+   Set comms denied → run 40 steps (10s) → verify duration ~10s
+
+Run: .venv/bin/python -m pytest tests/ -v
+
+────────────────────────────────────────────────────────────────────
+DELIVERABLES
+────────────────────────────────────────────────────────────────────
+
+1. fleet_manager.py — comms_mode state, command gating, autonomous behaviors
+2. routes.py — POST /api/comms-mode endpoint
+3. fleet_manager.py — comms state in get_fleet_state()
+4. Dashboard — comms toggle, disabled controls overlay, status indicator
+5. 8 new tests
+6. Full test suite — no regressions
+7. Commit when done
+
+DEMO STORY:
+  Fleet executing intercept mission. Operator toggles COMMS DENIED.
+  Header turns red: "COMMS DENIED." Command panel greys out. Fleet keeps
+  pursuing the contact. Drone keeps tracking. After 5 minutes, fleet
+  completes intercept and autonomously returns to base (comms_lost_behavior).
+  Operator restores comms. Green flash: "COMMS RESTORED." Controls re-enabled.
+  The fleet operated for 5 minutes with zero human input.
+```
+
+---
+
+## AUDIT 11: Cross-Domain Kill Chain — Drone Hands Off to Fleet
+**Goal**: Drone detects and tracks a contact, provides targeting data to surface vessels, fleet converges based on drone's sensor feed. This demonstrates multi-domain coordination and is the core of JADC2.
+
+```
+Execute Audit 11 — Cross-Domain Kill Chain for the LocalFleet project.
+
+Read CLAUDE.md first. Then read docs/localfleet_audit_plan.md — focus on AUDIT 11.
+
+COMPLETED AUDITS: Audits 1-10 complete. Predictive intercept, auto threat
+response, comms-denied autonomy all working. 147+ tests passing.
+
+YOUR TASK: Make the drone provide targeting data to surface vessels, creating
+a sensor-to-effector loop across domains (air → surface).
+
+────────────────────────────────────────────────────────────────────
+THE PROBLEM
+────────────────────────────────────────────────────────────────────
+
+Currently the drone and surface vessels operate independently. They happen
+to be on the same map, but:
+- The drone doesn't "see" contacts or relay information
+- Surface vessels don't receive targeting data from the drone
+- There's no handoff between domains
+- The drone patterns (ORBIT, SWEEP, TRACK, STATION) are geometric — they
+  don't interact with the contact system
+
+A defense CEO would ask: "Do they talk to each other?"
+The answer is no. This is the biggest architectural gap.
+
+────────────────────────────────────────────────────────────────────
+WHAT TO BUILD
+────────────────────────────────────────────────────────────────────
+
+A) DRONE SENSOR MODEL (modify drone_dynamics.py or new: src/fleet/drone_sensor.py)
+
+   The drone has a simulated sensor with a detection range:
+
+   DRONE_SENSOR_RANGE = 3000.0  # meters — drone can "see" contacts within 3km
+   DRONE_SENSOR_FOV = 120.0     # degrees — forward-looking sensor cone
+
+   def drone_detect_contacts(drone_x, drone_y, drone_heading,
+                              contacts: dict) -> List[str]:
+       """Return contact_ids visible to the drone's sensor."""
+       For each contact:
+       - Compute distance from drone
+       - Compute bearing from drone
+       - If distance < SENSOR_RANGE and bearing within FOV: detected
+       Return list of detected contact_ids
+
+   When the drone is in TRACK pattern and within sensor range of a contact:
+   - The drone "locks on" — it has a targeting solution
+   - Store: drone.tracked_contact_id = contact_id
+   - Store: drone.target_bearing, drone.target_range (updated each step)
+
+B) TARGETING DATA RELAY (modify fleet_manager.py step())
+
+   When the drone has a tracked contact:
+   1. Compute contact position from drone's perspective
+      (drone_x + range * cos(bearing), drone_y + range * sin(bearing))
+   2. Store as drone.relayed_target = {contact_id, x, y, bearing, range, confidence}
+   3. Surface vessels can "receive" this targeting data
+
+   In step(), when the drone has a locked target AND fleet is executing
+   intercept AND continuous replanning is active:
+   - Use the DRONE'S tracked position for intercept replanning
+     (instead of the omniscient contact.x, contact.y from the sim)
+   - This creates the relay chain: drone sensor → drone targeting → fleet nav
+
+   For now, the relay is perfect (no noise, no latency). Future enhancement
+   could add sensor noise proportional to range.
+
+C) AUTOMATIC HANDOFF SEQUENCE (modify fleet_manager.py)
+
+   The full kill chain sequence (triggered by threat detector from Audit 9):
+
+   Phase 1 — DETECT: Contact enters detection range (8km).
+     Fleet logs: "CONTACT DETECTED: bogey-1 at 7.2km"
+     No auto-action yet.
+
+   Phase 2 — TRACK: Contact enters warning range (5km).
+     Drone auto-tasks to TRACK the contact (Audit 9).
+     Fleet logs: "AUTO: Eagle-1 vectored to track bogey-1"
+
+   Phase 3 — LOCK: Drone gets within sensor range (3km) of contact.
+     Drone achieves targeting solution.
+     Fleet logs: "LOCK: Eagle-1 tracking bogey-1 — bearing 042° range 2.8km"
+     Dashboard shows targeting data on map (bearing line from drone to contact)
+
+   Phase 4 — ENGAGE: Operator approves intercept (or auto after comms timeout).
+     Surface vessels dispatch to intercept point using DRONE's targeting data.
+     Fleet logs: "ENGAGE: Fleet intercepting bogey-1 via Eagle-1 targeting"
+
+   Phase 5 — CONVERGE: Fleet closes on contact while drone maintains track.
+     Drone updates targeting. Fleet replans based on drone's data.
+     When fleet is within 500m of contact: "INTERCEPT COMPLETE"
+
+   Store the current phase in fleet_manager as self.kill_chain_phase (str or None).
+   Include in FleetState for dashboard display.
+
+D) DASHBOARD — KILL CHAIN VISUALIZATION
+
+   1. FleetMap.jsx:
+      - When drone has a targeting lock, draw a line from drone to contact
+        (yellow, thin, labeled "TRACK")
+      - When fleet is engaging, draw lines from fleet to intercept point
+        (red, converging arrows)
+      - Show drone's sensor cone as a semi-transparent wedge (optional,
+        nice-to-have)
+
+   2. MissionStatus.jsx:
+      - Show kill chain phase: "PHASE 3: DRONE LOCK — bogey-1"
+      - Show targeting data: "TGT: bogey-1 via Eagle-1 — 2.8km @ 042°"
+
+   3. MissionLog.jsx:
+      - Log each phase transition with timestamp
+
+────────────────────────────────────────────────────────────────────
+WHAT NOT TO DO
+────────────────────────────────────────────────────────────────────
+
+- Do NOT add actual radar/sensor physics — simple range+FOV check is enough
+- Do NOT add sensor noise yet — perfect relay first, noise is a future enhancement
+- Do NOT modify DroneCoordinator patterns — just add sensor awareness on top
+- Do NOT modify schemas.py
+- Do NOT break the ability to manually dispatch intercepts without the kill chain
+
+────────────────────────────────────────────────────────────────────
+TEST PLAN
+────────────────────────────────────────────────────────────────────
+
+New file: tests/test_kill_chain.py
+
+1. test_drone_detects_contact_in_range:
+   Drone at (0,0), contact at (2000, 0) → detected
+
+2. test_drone_no_detect_out_of_range:
+   Drone at (0,0), contact at (5000, 0) → not detected
+
+3. test_drone_no_detect_outside_fov:
+   Drone heading east, contact behind it → not detected
+
+4. test_drone_tracks_and_relays:
+   Drone in TRACK near contact → tracked_contact_id set, relay data available
+
+5. test_kill_chain_phase_progression:
+   Spawn contact at 9000m, run steps, verify phase transitions:
+   None → DETECT → TRACK → LOCK → (await engage)
+
+6. test_fleet_uses_drone_targeting:
+   Drone has lock on contact → fleet replan uses drone's relayed position
+
+7. test_kill_chain_in_fleet_state:
+   Active kill chain → get_fleet_state() includes phase and targeting data
+
+Run: .venv/bin/python -m pytest tests/ -v
+
+────────────────────────────────────────────────────────────────────
+DELIVERABLES
+────────────────────────────────────────────────────────────────────
+
+1. Drone sensor model (detection range + FOV)
+2. Targeting data relay from drone to fleet_manager
+3. Kill chain phase state machine in fleet_manager
+4. Fleet replanning uses drone targeting data
+5. Dashboard — targeting lines, phase display, log entries
+6. 7 new tests
+7. Full test suite — no regressions
+8. Commit when done
+
+DEMO STORY:
+  Fleet idle. Contact spawned at 9km. "CONTACT DETECTED" appears in log.
+  Contact closes to 5km. Drone auto-launches to track. Cyan trail streaks
+  toward red marker. Drone gets within 3km: "LOCK — Eagle-1 tracking bogey-1."
+  Yellow targeting line appears from drone to contact. Operator clicks
+  "INTERCEPT." Fleet dispatches to predicted intercept point. Blue arrows
+  converge. Drone maintains overhead track. Fleet arrives: "INTERCEPT COMPLETE."
+  The entire sequence played out across air and surface domains.
+```
+
+---
+
+## AUDIT 12: Decision Audit Trail — Explainable Autonomy
+**Goal**: Log not just what happened, but WHY. Every autonomous decision gets a human-readable rationale. This is non-negotiable for defense — operators must trust the system.
+
+```
+Execute Audit 12 — Decision Audit Trail for the LocalFleet project.
+
+Read CLAUDE.md first. Then read docs/localfleet_audit_plan.md — focus on AUDIT 12.
+
+COMPLETED AUDITS: Audits 1-11 complete. Full kill chain working.
+147+ tests passing. Do NOT break them.
+
+YOUR TASK: Add explainable decision logging — every autonomous action the
+system takes must be accompanied by a human-readable rationale showing WHY.
+
+────────────────────────────────────────────────────────────────────
+THE PROBLEM
+────────────────────────────────────────────────────────────────────
+
+The system now makes autonomous decisions (drone auto-track, threat
+assessment, intercept prediction, comms-denied fallback). But when these
+happen, the only feedback is "alpha → EXECUTING." The operator has no
+idea WHY alpha was chosen, why the intercept point is where it is, or
+why the drone went to track that specific contact.
+
+Defense systems require EXPLAINABILITY. An autonomous action that can't
+be explained is an autonomous action that won't be trusted. Every
+operator, every commander, every review board will ask: "Why did it do
+that?"
+
+────────────────────────────────────────────────────────────────────
+WHAT TO BUILD
+────────────────────────────────────────────────────────────────────
+
+A) DECISION LOG DATA STRUCTURE (new: src/fleet/decision_log.py)
+
+   class DecisionEntry:
+       timestamp: float
+       decision_type: str    # "intercept_solution", "threat_assessment",
+                             # "auto_track", "comms_fallback", "replan",
+                             # "asset_allocation"
+       action_taken: str     # "Dispatched alpha to (4200, 1800)"
+       rationale: str        # "Alpha selected: closest to target (2.1km),
+                             #  heading within 15° of intercept bearing,
+                             #  ETA 4m 22s. Bravo rejected: 3.8km, 
+                             #  unfavorable heading (87° off)."
+       assets_involved: List[str]
+       alternatives_considered: List[str]  # what was NOT chosen and why
+
+   class DecisionLog:
+       entries: List[DecisionEntry]  # bounded ring buffer, max 200
+
+       def log_decision(self, decision_type, action, rationale, assets, alternatives)
+       def get_recent(self, n=20) -> List[DecisionEntry]
+       def get_by_type(self, decision_type) -> List[DecisionEntry]
+
+B) INSTRUMENT ALL AUTONOMOUS DECISIONS
+
+   Go through every place the system makes a choice and add a decision log
+   entry. These are the key decision points:
+
+   1. INTERCEPT PREDICTION (fleet_manager.py — compute_intercept_point):
+      Log: "Intercept solution computed. Target bogey-1 at (3000, 1500)
+      heading 225° at 1.5 m/s. Fleet centroid at (500, 200). Predicted
+      intercept at (2400, 1100), ETA 280s. Convergence angle: 32°."
+
+   2. ASSET ALLOCATION (fleet_manager.py — dispatch_command):
+      For each asset dispatched, log why:
+      "Alpha dispatched to (2400, 1100): distance 2.1km, heading offset 15°,
+       ETA 4m22s — best candidate."
+      "Bravo dispatched to (2600, 1100): echelon offset from lead (Alpha)."
+      "Eagle-1 dispatched to TRACK bogey-1: fastest asset (15 m/s), air
+       domain provides overhead surveillance."
+
+   3. THREAT DETECTION (threat_detector.py — assess_threats):
+      Log: "bogey-1 assessed: distance 3200m (WARNING range), closing at
+      2.8 m/s, bearing 045° from fleet. Action: recommend TRACK."
+
+   4. AUTO-DRONE RETASK (fleet_manager.py — auto-response):
+      Log: "AUTO-TRACK decision. Eagle-1 re-tasked from STATION to TRACK
+      bogey-1. Reason: contact entered warning range (3200m). Fleet was
+      idle — no active mission conflict."
+
+   5. COMMS-DENIED FALLBACK (fleet_manager.py):
+      Log: "COMMS FALLBACK: comms denied for 312s, exceeding 300s timeout.
+      Standing orders: return_to_base. Dispatching all assets to home."
+
+   6. REPLAN (fleet_manager.py — continuous replan):
+      Log: "Replan triggered. Intercept point shifted 180m (from (2400,1100)
+      to (2220,1020)). Target moved since last plan. Fleet waypoints updated."
+
+C) DECISION LOG API ENDPOINT (add to routes.py)
+
+   GET /api/decisions?limit=20&type=intercept_solution
+   Returns recent decision entries, optionally filtered by type.
+
+D) DASHBOARD — DECISION PANEL (new: DecisionPanel.jsx or extend MissionLog)
+
+   Display decision log entries in a scrollable panel:
+   - Each entry shows: timestamp, decision_type badge, action (bold),
+     rationale (expandable), assets involved
+   - Color-code by type: intercept=red, threat=amber, auto=cyan, comms=orange
+   - Most recent at top
+   - Expandable: click to see alternatives_considered
+
+   This can replace or augment the existing MissionLog, or be a new tab
+   in the sidebar.
+
+────────────────────────────────────────────────────────────────────
+WHAT NOT TO DO
+────────────────────────────────────────────────────────────────────
+
+- Do NOT use the existing SQLite mission_logger for this — that's for
+  event replay. The decision log is for real-time explainability.
+- Do NOT log every step() tick — only log when a DECISION is made
+- Do NOT modify schemas.py
+- Do NOT make the rationale computation expensive — it's string formatting
+  of data you already have
+
+────────────────────────────────────────────────────────────────────
+TEST PLAN
+────────────────────────────────────────────────────────────────────
+
+New file: tests/test_decision_log.py
+
+1. test_decision_log_stores_entries:
+   Log 3 decisions → get_recent(3) returns all 3
+
+2. test_decision_log_bounded:
+   Log 250 decisions → length is 200 (ring buffer)
+
+3. test_intercept_logs_rationale:
+   Dispatch intercept → decision log has entry with type "intercept_solution"
+   and non-empty rationale containing distance and ETA
+
+4. test_threat_assessment_logs:
+   Contact at warning range → decision log has "threat_assessment" entry
+
+5. test_auto_track_logs_reason:
+   Drone auto-tracks → decision log has "auto_track" entry explaining why
+
+6. test_decision_log_api:
+   GET /api/decisions returns JSON list of entries
+
+Run: .venv/bin/python -m pytest tests/ -v
+
+────────────────────────────────────────────────────────────────────
+DELIVERABLES
+────────────────────────────────────────────────────────────────────
+
+1. src/fleet/decision_log.py — DecisionEntry + DecisionLog classes
+2. fleet_manager.py — instrument all decision points
+3. routes.py — GET /api/decisions endpoint
+4. Dashboard — decision panel with rationale display
+5. 6 new tests
+6. Full test suite — no regressions
+7. Commit when done
+
+DEMO STORY:
+  During the intercept demo, the decision panel shows WHY each choice was
+  made in real time. "Alpha selected: closest asset, 15° heading offset."
+  "Intercept point: (2400, 1100) — target predicted 280s ahead." "Drone
+  re-tasked: contact entered warning zone." The operator can SEE the AI
+  thinking. This is the trust-builder.
+```
+
+---
+
+## AUDIT 13: Mission-Specific Behaviors — Make Each Mission Type Matter
+**Goal**: The 6 mission types (PATROL, SEARCH, ESCORT, LOITER, AERIAL_RECON, INTERCEPT) should each produce distinct, intelligent fleet behavior instead of all being "go to waypoint."
+
+```
+Execute Audit 13 — Mission-Specific Behaviors for the LocalFleet project.
+
+Read CLAUDE.md first. Then read docs/localfleet_audit_plan.md — focus on AUDIT 13.
+
+COMPLETED AUDITS: Audits 1-12 complete. Full autonomous C2 system working.
+147+ tests passing. Do NOT break them.
+
+YOUR TASK: Make each of the 6 mission types produce visually distinct and
+tactically appropriate fleet behavior.
+
+────────────────────────────────────────────────────────────────────
+THE PROBLEM
+────────────────────────────────────────────────────────────────────
+
+Right now, ALL mission types do the same thing: go to waypoints in a
+straight line. PATROL and SEARCH look identical. ESCORT doesn't escort
+anything. LOITER doesn't loiter. The mission_type field is stored in
+fleet_manager but IGNORED during execution.
+
+A demo that shows "intercept" and "patrol" looking exactly the same is a
+demo that shows you didn't implement mission behaviors.
+
+────────────────────────────────────────────────────────────────────
+WHAT TO BUILD
+────────────────────────────────────────────────────────────────────
+
+Modify fleet_manager.py dispatch_command() and step() to handle each
+mission type differently. The changes should be MINIMAL and build on
+existing infrastructure.
+
+A) PATROL — Continuous Loop
+
+   Current: Go to waypoints, stop at last one, go IDLE.
+   New behavior: When reaching the last waypoint, loop back to the first.
+   Continue indefinitely until RTB or new command.
+
+   Implementation in step():
+   When mission == PATROL and vessel reaches last waypoint:
+     - Reset i_wpt to 0 (loop back to first waypoint)
+     - Don't go IDLE — stay EXECUTING
+   This creates a visible patrol loop on the map.
+   Drone: ORBIT pattern around the patrol centroid.
+
+B) SEARCH — Expanding Sweep
+
+   Current: Go to waypoints (same as patrol).
+   New behavior: Generate a lawnmower/zigzag search pattern from the
+   commanded area.
+
+   Implementation in dispatch_command():
+   When mission == SEARCH:
+     - Take the commanded waypoint as the center of the search area
+     - Generate a zigzag pattern: 4-6 waypoints in a raster scan
+       covering a 500m x 500m area centered on the target
+     - Each vessel gets a slightly offset pattern (parallel tracks
+       with spacing_meters between them)
+   Drone: SWEEP pattern over the same area.
+
+   The waypoint generation can be simple:
+     base_x, base_y = commanded waypoint
+     for i in range(num_legs):
+       if i % 2 == 0: add (base_x + offset, base_y + i * leg_spacing)
+       else: add (base_x - offset, base_y + i * leg_spacing)
+
+C) ESCORT — Follow a Friendly Contact
+
+   Current: Go to waypoints (same as all others).
+   New behavior: Maintain formation around a designated friendly unit.
+
+   Implementation:
+   When mission == ESCORT:
+     - The first waypoint is treated as the escort target's current position
+     - In step(), vessels maintain their formation offset RELATIVE to the
+       escort point (which could be another vessel or a moving waypoint)
+     - For the demo: escort a contact (the contact model already exists)
+     - Vessels match the contact's speed and heading, maintaining formation
+
+   This is the simplest approach: in step(), if mission == ESCORT and
+   contacts exist, recompute desired waypoint as:
+     escort_x = contact.x + formation_offset_x
+     escort_y = contact.y + formation_offset_y
+   This keeps the fleet "attached" to the contact.
+
+D) LOITER — Station-Keeping Pattern
+
+   Current: Go to waypoint, stop, go IDLE.
+   New behavior: Arrive at waypoint, then orbit in a small circle.
+
+   Implementation in step():
+   When mission == LOITER and vessel reaches the waypoint:
+     - Don't go IDLE
+     - Switch to a small orbit: generate 4 waypoints in a 200m circle
+       around the loiter point
+     - Loop through them continuously (like PATROL but in a circle)
+   Drone: ORBIT pattern at the loiter point.
+
+E) AERIAL_RECON — Drone-Primary Mission
+
+   Current: Same as everything else.
+   New behavior: Drone does a wide SWEEP while surface vessels hold position.
+
+   Implementation in dispatch_command():
+   When mission == AERIAL_RECON:
+     - Drone: SWEEP pattern over a large area (1000m x 1000m)
+     - Surface vessels: move to a holding point near the recon area and
+       LOITER (small orbit)
+     - Surface vessels provide security while drone does the actual work
+
+F) INTERCEPT — Already enhanced (Audit 8)
+   Predictive interception with continuous replanning. No changes needed.
+
+────────────────────────────────────────────────────────────────────
+DASHBOARD CHANGES
+────────────────────────────────────────────────────────────────────
+
+- MissionStatus.jsx should show the mission type with a distinctive icon
+  or color for each type
+- Patrol loops should be visible as repeating trail patterns on the map
+- Search zigzags should be visible as the fleet sweeps
+- No new components needed — the existing map and status bar handle this
+
+────────────────────────────────────────────────────────────────────
+WHAT NOT TO DO
+────────────────────────────────────────────────────────────────────
+
+- Do NOT modify schemas.py
+- Do NOT add new mission types — use the existing 6
+- Do NOT make the behaviors complex — simple geometric patterns are fine
+- Do NOT break the intercept flow (Audit 8)
+- Do NOT change how dispatch_command handles formation offsets —
+  layer mission behaviors ON TOP of existing formation logic
+
+────────────────────────────────────────────────────────────────────
+TEST PLAN
+────────────────────────────────────────────────────────────────────
+
+Add to tests/test_fleet_manager.py or new tests/test_mission_behaviors.py:
+
+1. test_patrol_loops_back:
+   Dispatch patrol with 2 waypoints. Run enough steps for vessel to reach
+   last waypoint. Verify it goes back to first waypoint (i_wpt resets).
+   Verify status remains EXECUTING (not IDLE).
+
+2. test_search_generates_zigzag:
+   Dispatch search to (500, 500). Verify generated waypoints form a
+   zigzag pattern (alternating x values, increasing y values).
+
+3. test_loiter_orbits_after_arrival:
+   Dispatch loiter to (300, 300). Run steps until arrival. Verify vessel
+   does NOT go IDLE. Verify position stays within 300m of loiter point
+   after 200 more steps.
+
+4. test_escort_follows_contact:
+   Spawn contact moving east. Dispatch escort. Run 200 steps. Verify
+   fleet centroid tracks the contact's movement direction.
+
+5. test_aerial_recon_drone_sweeps:
+   Dispatch aerial_recon. Verify drone has SWEEP pattern. Verify surface
+   vessels are near the area (not dispatched to distant waypoints).
+
+6. test_intercept_unchanged:
+   Verify existing intercept tests still pass (regression check).
+
+Run: .venv/bin/python -m pytest tests/ -v
+
+────────────────────────────────────────────────────────────────────
+DELIVERABLES
+────────────────────────────────────────────────────────────────────
+
+1. fleet_manager.py — mission-specific logic in dispatch_command() and step()
+2. Patrol loops, search zigzags, loiter orbits, escort follows, recon sweeps
+3. 6 new tests
+4. Full test suite — no regressions
+5. Commit when done
+
+DEMO STORY:
+  Show all 5 non-intercept missions in quick succession:
+  "All vessels patrol sector in column" → visible loop pattern
+  "Search the area around 800 400" → zigzag sweep visible
+  "Loiter at 500 500" → small orbit pattern
+  "Escort the contact" → fleet shadows the moving target
+  "Aerial recon of sector north" → drone sweeps, vessels hold
+  Each mission looks DIFFERENT on the map. That's the point.
+```
+
+---
+
+## COMPLETED AUDIT ARCHIVE
+
+The detailed prompts for completed audits are preserved below for reference.
+These audits are DONE — do not re-execute them.
+
+<details>
+<summary>AUDIT 1: Navigation Circling (DONE)</summary>
+
+**Status**: DONE — Waypoint completion fixed. Vessels reach IDLE.
+
+AUDIT TASK: Fix the vessel circling/endless-loop navigation bug.
+
+CONTEXT: Vessels were going in endless circles instead of reaching waypoints.
+Root cause: waypoint_selection() never advanced past the last waypoint.
+
+FIXED:
+- `src/navigation/planning.py` — waypoint_selection() now advances i_wpt past
   the last waypoint (i_wpt = j + 1), allowing completion detection
-- `src/fleet/fleet_manager.py` — Added `continue` after setting IDLE so the 
-  vessel stops navigating after reaching the last waypoint
+- `src/fleet/fleet_manager.py` — Added `continue` after setting IDLE
 - `tests/test_fleet_manager.py` — Added test_vessel_reaches_waypoint_and_goes_idle
 
-**NOT YET FIXED (these are now covered by Audit 6):**
-- Heading angle wrapping in controller.py (causes figure-8 wrong-direction turns)
-- Speed reduction during large heading errors (causes wide arcs)
-- Yaw bias noise too aggressive (causes heading drift)
-- Waypoint acceptance circle too large (108m)
-- Cross-track oscillation near waypoints
+Remaining trajectory issues moved to Audit 6.
+</details>
 
-Audit 1 fixed "vessel never stops" but Audit 6 fixes "vessel takes a terrible 
-path to get there." Both are needed for correct navigation behavior.
+<details>
+<summary>AUDIT 6: Vessel Timing & Trajectory (DONE — commit 054c6cf)</summary>
 
----
+**Status**: DONE — All 6 issues fixed + 3 trajectory tests added.
 
-## AUDIT 6 STATUS UPDATE (Completed 2026-04-01)
+| File | Issue | Fix |
+|------|-------|-----|
+| controller.py | Heading wrapping | `(e_psi + pi) % (2*pi) - pi` |
+| fleet_manager.py | Speed during turns | `max(0.3, 1.0 - 0.7 * err/pi)` |
+| vessel_dynamics.py | Yaw bias noise | `0.1 * randn()` (was 0.5) |
+| planning.py | Acceptance circle | 27m (was 108m) |
+| planning.py | Pure pursuit fallback | Within 500m, steer directly |
 
-**ALL 6 ISSUES FIXED + 3 TRAJECTORY TESTS ADDED.** Commit: `054c6cf`
+Tests: test_vessel_does_not_overshoot_on_uturn, test_return_to_base_no_loop,
+test_vessel_straight_line_accuracy.
+</details>
 
-**Changes by file:**
+<details>
+<summary>AUDIT 7: LLM Command Quality (DONE — commit 478a866)</summary>
 
-| File | Issue | Fix Applied |
-|------|-------|-------------|
-| `src/dynamics/controller.py` | A — Heading wrapping | `e_psi = (e_psi + np.pi) % (2*np.pi) - np.pi` — vessels now take the short-way turn |
-| `src/fleet/fleet_manager.py` | B — Speed during turns | Speed scales to 30% at 180° error: `max(0.3, 1.0 - 0.7 * err/pi)` — tight arcs instead of wide loops |
-| `src/dynamics/vessel_dynamics.py` | C — Yaw bias noise | Reduced `w_b` from `0.5 * randn()` to `0.1 * randn()` — less drift, still realistic |
-| `src/navigation/planning.py` | D — Acceptance circle | Reduced from 108m (`200/1852`) to 27m (`50/1852`) — better for short missions |
-| `src/navigation/planning.py` | E — Pure pursuit fallback | Within 500m of waypoint, steer directly (ignore cross-track) — eliminates near-waypoint wobble |
-| N/A | F — `u_c` vs `u` for position | No change — instant speed via `u_c` is acceptable for demo. Documented as intentional. |
+**Status**: DONE — Waypoint clamping, asset ID validation, timeout, retry variation.
 
-**Tests added to `tests/test_fleet_manager.py`:**
-- `test_vessel_does_not_overshoot_on_uturn` — U-turn overshoot < 100m
-- `test_return_to_base_no_loop` — RTB 500m in < 150s, trajectory < 150% straight-line
-- `test_vessel_straight_line_accuracy` — lateral deviation < 30m over 1000m
+Changes: ollama_client.py (expanded prompt, 30s timeout, varied retries),
+fleet_commander.py (waypoint bounds ±5000m, asset ID validation, dispatch summary).
+</details>
 
-**Live verification:** Patrol to (800, 400) with all assets → RTB. Clean arcs, no figure-8, 
-no wrong-direction travel. Visible improvement on dashboard trail lines.
+<details>
+<summary>AUDIT 2: Land Avoidance (DONE — commit e46962c)</summary>
 
-**Note on Issue F (instant speed):** The vessel dynamics use `u_c` (commanded speed) 
-directly for position updates rather than the `u` state (which ramps up via a 50s time 
-constant). This means vessels move at full speed instantly. The `u` state IS computed 
-and ramps up, but only affects the reported speed in `get_fleet_state()`, not the actual 
-trajectory. This is a known inconsistency but acceptable for demo purposes. If realistic 
-speed ramp-up is ever needed (e.g., for harbor maneuvering), change lines 26-27 in 
-`vessel_dynamics.py` from `u_c * cos/sin(psi)` to `u * cos/sin(psi)`.
+**Status**: DONE — Cape Cod polygon + land_check.py + heading correction.
 
-**Future consideration — simulation time scaling:** The physics engine uses `dt` passed 
-into `step()`. A time multiplier (e.g., 2x, 4x, 8x) can be implemented by calling 
-`step(dt * time_scale)` or by calling `step(dt)` multiple times per real-time tick. 
-This would let the operator fast-forward missions on screen without changing physics 
-constants. The WebSocket tick rate (4Hz) stays the same — only the sim advances faster. 
-This is safe as long as `dt * time_scale` stays below ~1.0s to avoid Euler integration 
-instability. Recommended approach: multiple sub-steps per tick rather than one large dt.
+New file: src/navigation/land_check.py — 24-vertex Cape Cod polygon, ray-casting
+point-in-polygon, land_repulsion_heading() called in fleet_manager step().
+17 tests in test_land_check.py. 136 total tests passing.
+</details>
 
----
+<details>
+<summary>AUDIT 4: Mission Lifecycle / Intercept (DONE — commit 098222b)</summary>
 
-## AUDIT 2 STATUS UPDATE (Completed 2026-04-01)
+**Status**: DONE — INTERCEPT mission type, Contact model, target simulation.
 
-**LAND AVOIDANCE MODULE BUILT + INTEGRATED.** Commit: `e46962c`
+Schema additions: INTERCEPT MissionType, Contact model, FleetState.contacts.
+fleet_manager.py: contacts dict, spawn/remove, straight-line step, API endpoints.
+5 tests in test_intercept.py. 141 total tests passing.
+</details>
 
-**Approach chosen:** Simplified Cape Cod polygon defined inline (24 lat/lng vertices, ~500m 
-accuracy), converted to local meters at import time. Pure ray-casting — no Shapely or 
-external data files. Extensible: add RI harbor polygons by appending to `LAND_POLYGONS` list.
+<details>
+<summary>AUDIT 3: GPS-Denied Dead Reckoning (DONE — commit c2caeed)</summary>
 
-**New file: `src/navigation/land_check.py`**
-- `is_on_land(x, y)` — ray-casting point-in-polygon against all land polygons
-- `nearest_water_point(x, y)` — projects to nearest polygon edge + 10m margin into water
-- `check_path_clear(x1, y1, x2, y2)` — sampled line-segment vs coastline (20 sample points)
-- `land_repulsion_heading(x, y, psi, look_ahead)` — sweeps left/right to find clear water, returns partial heading correction (radians)
-- `latlng_to_meters(lat, lng)` — coordinate conversion using shared ORIGIN_LAT/ORIGIN_LNG
-- Cape Cod polygon covers from Canal (Bourne) through Provincetown, both Atlantic and bay coasts
+**Status**: DONE — DeadReckoningState, DENIED mode affects navigation, drift accumulates.
 
-**Integration in `fleet_manager.py step()`:**
-- 6 lines added after `planning()` computes `psi_desired`, before speed-scaling block
-- Calls `land_repulsion_heading(state[0], state[1], psi_desired, look_ahead=75.0)`
-- Adds correction to `psi_desired` — the existing speed-scaling-during-turns and PID controller then operate on the corrected heading
-- Does NOT touch reactive_avoidance (vessel-vessel), controller, or vessel_dynamics
+Schema: DENIED added to GpsMode. gps_denied.py: dead_reckon_step().
+fleet_manager.py: navigation uses DR position in DENIED mode, physics uses true.
+6 tests in test_gps_denied.py. 147 total tests passing.
+</details>
 
-**Tests: `tests/test_land_check.py` — 17 new tests**
-- Coordinate conversion (3), is_on_land point-in-polygon (5), check_path_clear (3), nearest_water_point (2), land_repulsion_heading (3), integration sim (1)
-- Integration test: vessel near Truro coast heading toward land for 50s — land correction prevents grounding
-- **136 total tests passing** (119 existing + 17 new), zero regressions
+<details>
+<summary>AUDIT 5: Dashboard C2 Ops Center (DONE — commit dd49d20)</summary>
 
-**What's NOT yet done (needed for RI harbor):**
-- Dashboard coastline overlay (optional Audit 5 item)
-- Higher-resolution polygons for harbor approaches
-- Channel waypoint planning (safe routes through narrow passages)
-- Return-to-base land-aware pathfinding
+**Status**: DONE — Full functional C2 dashboard.
 
----
+New components: RTBButton, ContactPanel, MissionStatus, ScenarioPanel.
+Modified: FleetMap (contact markers, trails, coastline overlay),
+GpsDeniedToggle (3-state FULL/DEGRADED/DENIED), App.jsx (wired everything).
+pnpm build clean. 147 backend tests unaffected.
+</details>
 
-## AUDIT 3 STATUS UPDATE (Completed 2026-04-01)
+<details>
+<summary>FUTURE: Rhode Island Harbor Navigation Roadmap</summary>
 
-**GPS-DENIED DEAD RECKONING BUILT + INTEGRATED.** Commit: `c2caeed`. 147 tests passing (141 + 6 new).
+Full roadmap preserved from original plan:
+- Phase 1: RI Coastline Data (Narragansett Bay polygons)
+- Phase 2: Channel Waypoint Graph (A* through harbor)
+- Phase 3: Target/Contact Model (DONE — Audit 4)
+- Phase 4: Land-Aware Return-to-Base
+- Phase 5: Slow-Speed Harbor Maneuvering
+- Phase 6: LLM + Dashboard Updates
 
-**Schema addition (`src/schemas.py`):**
-- `DENIED = "denied"` added to `GpsMode` enum (now 3 modes: FULL, DEGRADED, DENIED)
-
-**Dead reckoning engine (`src/utils/gps_denied.py`):**
-- `DeadReckoningState` dataclass: `estimated_x`, `estimated_y`, `drift_error`, `time_denied`
-- `dead_reckon_step(dr_state, speed, heading_rad, dt)` — advances DR estimate, adds 0.5% random-walk drift per step
-- `get_navigated_position(true_x, true_y, dr_state, gps_mode)` — returns position by mode
-
-**Integration in `fleet_manager.py`:**
-- `dr_states` dict initialized per vessel in `__init__()`
-- `step()`: GPS-mode-aware navigation — DENIED uses DR position, DEGRADED adds noise, FULL uses true. Physics simulation and land avoidance ALWAYS use true position.
-- `get_fleet_state()`: DENIED reports DR estimated positions and drift error in `position_accuracy`
-- `set_gps_mode()`: initializes DR from true position on DENIED entry, resets on exit
-
-**Tests (`tests/test_gps_denied.py` — 6 new):**
-- DR step accumulates drift, DENIED affects navigation, drift grows over time, GPS restore resets DR, DEGRADED adds nav noise, land avoidance uses true position
+Dependency: Phase 1 → 2 → 4 → 5. Phase 3 independent. Phase 6 last.
+This is deferred until the core autonomy features (Audits 8-13) are complete.
+</details>
 
 ---
 
-## AUDIT 4 STATUS UPDATE (Completed 2026-04-01)
+## THE DEMO SCRIPT — "THE 3-MINUTE HIRE"
 
-**INTERCEPT MISSION + CONTACT TRACKING BUILT.** 141 tests passing (136 existing + 5 new).
+After all audits (8-13) are complete, this is the demo video that gets the job:
 
-**Schema additions (`src/schemas.py`):**
-- `INTERCEPT = "intercept"` added to `MissionType` enum (now 6 mission types)
-- `Contact` model: `contact_id`, `x`, `y`, `heading` (radians, math convention), `speed` (m/s), `domain`
-- `contacts: List[Contact] = []` field added to `FleetState`
+**0:00 — OPENING SHOT**
+Map loads. Dark theme. Cape Cod coastline visible. 3 blue vessel markers + 1 cyan drone at base. Header: "LOCALFLEET C2 DASHBOARD." Status: "STANDBY."
 
-**Contact simulation (`src/fleet/fleet_manager.py`):**
-- `contacts` dict in `__init__()` — starts empty
-- `spawn_contact(contact_id, x, y, heading, speed, domain)` — creates simulated target
-- `remove_contact(contact_id)` — removes by ID, returns bool
-- In `step()`: contacts move in straight lines — `x += speed * cos(heading) * dt`
-- In `get_fleet_state()`: contacts included in FleetState response
+**0:15 — VOICE COMMAND: PATROL**
+Operator speaks: "All vessels, patrol sector northeast in echelon."
+Fleet moves out in formation. Drone orbits ahead. Trail lines draw on map.
+Decision log: "Echelon formation applied. Alpha lead, bravo +200m offset..."
 
-**Intercept behavior:** One-shot waypoint dispatch. Surface vessels navigate to target position via existing waypoint nav. Drone assigned TRACK pattern. No continuous pursuit — dynamic re-targeting is a future enhancement.
+**0:30 — CONTACT APPEARS**
+Bogey-1 spawned at 9km. Yellow marker appears. Mission log: "CONTACT DETECTED: bogey-1 at 8.7km."
 
-**LLM update (`src/llm/ollama_client.py`):**
-- Added `intercept` to mission type list in system prompt rule #7
-- Added Example 6: intercept command with echelon formation and drone TRACK
+**0:45 — AUTO-TRACK**
+Contact closes to 5km. Drone auto-retasks. Cyan trail streaks toward contact. Log: "AUTO: Eagle-1 vectored to track bogey-1 — warning range."
+Decision log: "Eagle-1 selected: only air asset, fastest platform (15 m/s)."
 
-**API endpoints (`src/api/routes.py`):**
-- `GET /api/contacts` — list active contacts
-- `POST /api/contacts` — spawn contact (contact_id, x, y, heading, speed, domain)
-- `DELETE /api/contacts/{contact_id}` — remove contact
+**1:00 — DRONE LOCK**
+Drone reaches sensor range. Yellow targeting line appears. "LOCK: Eagle-1 tracking bogey-1 — 2.8km @ 042°." Phase indicator: "PHASE 3: LOCK."
 
-**Tests (`tests/test_intercept.py` — 5 new tests):**
-- `test_spawn_and_remove_contact` — create, verify, remove, verify gone
-- `test_contact_moves_in_step` — straight-line motion matches expected displacement
-- `test_intercept_dispatch_sets_waypoints` — vessels EXECUTING, drone TRACK, mission recorded
-- `test_contacts_in_fleet_state` — contacts appear/disappear in FleetState
-- `test_intercept_mission_vessels_converge` — 200-step integration, all assets closer to target
+**1:15 — INTERCEPT COMMAND**
+Dashboard flashes "INTERCEPT RECOMMENDED." Operator clicks red button.
+Fleet dispatches to PREDICTED intercept point (ahead of target). Blue arrows converge. "Intercept solution: target at 4.2km heading 225°, fleet dispatching to (2400, 1100), ETA 5m12s."
 
-**What's NOT in this audit (deferred):**
-- Continuous pursuit / dynamic re-targeting (future enhancement)
-- Formation maintenance during transit (formations applied at dispatch only)
-- Land-aware return-to-base (Phase 4 of RI roadmap, needs channel_nav.py)
-- Dashboard contact markers (Audit 5 scope)
+**1:30 — GPS DENIED**
+Mid-intercept, operator toggles GPS DENIED. Red uncertainty rings grow. "GPS: DENIED — DR active." Fleet continues on dead reckoning. Drift counter ticking.
 
----
+**1:45 — COMMS DENIED**
+Operator toggles COMMS DENIED. Header turns red. Controls grey out. "COMMS DENIED — fleet autonomous." Fleet keeps closing on target. Drone keeps tracking.
 
-## FUTURE GOAL: Rhode Island Harbor Navigation — Full Roadmap
+**2:15 — CONVERGENCE**
+Fleet arrives at intercept point. Contact and vessels converge on map. "INTERCEPT COMPLETE." All under GPS-denied + comms-denied conditions.
 
-The end-state demo: fleet departs an RI harbor, transits the channel to open water, 
-intercepts a target, and returns through the channel to dock. This section breaks down 
-every capability needed, what exists today, and what must be built — without breaking 
-anything that already works.
+**2:30 — COMMS RESTORED**
+Operator restores comms. Green flash. "COMMS RESTORED after 45s." RTB button re-enabled. Operator clicks RTB. Fleet turns home.
 
-### What Exists Today (foundation)
-| Capability | Status | Files |
-|------------|--------|-------|
-| Surface vessel dynamics | Working | `vessel_dynamics.py`, `controller.py` |
-| Waypoint navigation + pure pursuit | Working (Audit 6) | `planning.py` |
-| Heading wrapping + speed scaling | Working (Audit 6) | `controller.py`, `fleet_manager.py` |
-| Vessel-vessel reactive avoidance | Working | `reactive_avoidance.py` |
-| Land detection (Cape Cod polygon) | Working (Audit 2) | `land_check.py` |
-| Land repulsion heading correction | Working (Audit 2) | `land_check.py` → `fleet_manager.py` |
-| LLM command parsing + validation | Working (Audit 7) | `ollama_client.py`, `fleet_commander.py` |
-| Drone coordination patterns | Working | `drone_coordinator.py`, `drone_dynamics.py` |
-| Return-to-base (straight line) | Working but naive | `fleet_manager.py` |
-| Formation dispatch | Working (at dispatch time) | `formations.py` |
+**2:45 — GPS RESTORED**
+GPS restored. Uncertainty rings collapse. DR drift: 42m. Fleet navigates home cleanly.
 
-### Gap Analysis — What Must Be Built
+**3:00 — CLOSING SHOT**
+All assets IDLE at base. Decision panel shows full audit trail of every choice. Cape Cod coastline in the background. Status: "STANDBY."
 
-**PHASE 1: RI Coastline Data** (extends Audit 2, no code changes beyond land_check.py)
-- Add Narragansett Bay polygon(s) to `LAND_POLYGONS` in `land_check.py`
-- Need: Point Judith → Newport → Jamestown → Conanicut → Prudence Island → Providence shoreline
-- Accuracy needed: ~100m for open bay, ~25m for harbor channels
-- Data source options:
-  - Manual polygon from nautical charts (lightest, same approach as Cape Cod)
-  - NOAA ENC extract for Narragansett Bay (accurate, public domain, but needs parsing)
-  - Natural Earth 1:10m coastline shapefile clipped to area (middle ground)
-- Move `ORIGIN_LAT`/`ORIGIN_LNG` to a shared config or accept per-scenario origins
-- **Risk:** Large/complex polygons slow down ray-casting. Mitigate with bounding-box pre-check per polygon.
-
-**PHASE 2: Channel Waypoint Graph** (new module, ~1 file)
-- Create `src/navigation/channel_nav.py` with a graph of safe waypoints through the harbor
-- Nodes: named waypoints along the channel center (e.g., "harbor_mouth", "channel_buoy_3", "breakwater_exit", "open_water_start")
-- Edges: straight-line segments verified clear via `check_path_clear()`
-- `plan_channel_route(start_xy, end_xy) -> List[Waypoint]` — A* or Dijkstra from nearest channel node to open water
-- This replaces the current straight-line waypoint approach for harbor transits
-- **Key constraint:** Must output waypoints in the same format that `fleet_manager.py dispatch_command()` already consumes (list of `Waypoint(x, y)` in meters). No schema changes needed.
-- For return-to-base: `fleet_manager.py return_to_base()` currently sends vessels straight home. Must route through channel graph instead.
-
-**PHASE 3: Target / Contact Model** ✅ DONE (Audit 4)
-- `INTERCEPT` added to `MissionType`, `Contact` model added, `FleetState.contacts` field added
-- `fleet_manager.py` has contacts dict, spawn/remove, straight-line step update
-- Intercept is one-shot waypoint dispatch (no lead-angle computation yet — future enhancement)
-- Drone switches to TRACK pattern on target
-- API endpoints for contact CRUD at `/api/contacts`
-
-**PHASE 4: Land-Aware Return-to-Base** (modifies fleet_manager.py)
-- Current `return_to_base()` draws a straight line from current position to home
-- If the fleet is in open water and home is in a harbor, the straight line crosses land
-- Fix: use channel_nav to plan the return route through the harbor entrance
-- `return_to_base()` calls `plan_channel_route(current_pos, home_pos)` and dispatches those waypoints
-- The land_repulsion_heading in `step()` acts as a safety net, but the PRIMARY avoidance should be the channel route
-
-**PHASE 5: Slow-Speed Harbor Maneuvering** (optional, vessel_dynamics.py)
-- Current vessels use `u_c` (instant speed) for position. Fine in open water.
-- In a narrow harbor channel, instant speed changes look unrealistic and could overshoot turns
-- Fix: switch to `u` (ramped speed state) for position updates in `vessel_dynamics.py` lines 26-27
-- Also need tighter turn radius at slow speed — reduce `SAT_AMP` or increase `k_psi` proportionally
-- **Only do this if channel navigation looks wrong at the current instant-speed behavior. Don't fix preemptively.**
-
-**PHASE 6: LLM + Dashboard Updates** (Audit 5/7 scope)
-- Update `ollama_client.py` system prompt: new coordinate ranges, RI harbor location, channel terminology
-- Dashboard: render coastline polygons as Leaflet overlays (no-go zones), channel waypoints as markers
-- Add target/contact marker (red) for intercept missions
-- Move ORIGIN_LAT/ORIGIN_LNG to scenario config so Cape Cod and RI demos can coexist
-
-### Dependency Chain (build order)
-```
-Phase 1 (RI polygons)
-    └─→ Phase 2 (channel nav graph)
-            └─→ Phase 4 (land-aware RTB)
-                    └─→ Phase 5 (slow-speed, if needed)
-
-Phase 3 (intercept/target — Audit 4, independent of land)
-    └─→ Phase 6 (dashboard + LLM — after everything else works)
-```
-
-### What NOT To Do
-- Do NOT add a full GIS/ENC parsing pipeline — manually-defined polygons are sufficient for the demo
-- Do NOT modify `schemas.py` beyond adding INTERCEPT to MissionType (if needed) and Contact model
-- Do NOT change physics constants (k_psi, t_psi, SAT_AMP) — tune behavior through speed scaling and waypoint placement
-- Do NOT break the existing Cape Cod demo — RI harbor should be an additional scenario, not a replacement
-- Do NOT implement real-time AIS or external sensor feeds — the target/contact is simulated internally
-
-### Test Strategy for Each Phase
-| Phase | Key Tests |
-|-------|-----------|
-| 1 | Point-in-polygon for RI bay land points, path_clear through channel |
-| 2 | Route from harbor to open water has no land crossings, correct waypoint count |
-| 3 | Intercept command dispatches, vessels converge on moving target |
-| 4 | RTB from open water routes through channel, no land crossings |
-| 5 | Vessel speed ramps up smoothly, doesn't overshoot turns in channel |
-| 6 | LLM generates valid commands for RI scenario, dashboard renders polygons |
-
-### Estimated Scope
-- Phase 1: 1 session (polygon data entry + tests)
-- Phase 2: 1-2 sessions (channel graph + A* + integration)
-- Phase 3: 1-2 sessions (Audit 4 — schemas, target tracking, intercept logic)
-- Phase 4: 1 session (RTB routing through channel graph)
-- Phase 5: 0-1 sessions (only if needed after testing Phase 4)
-- Phase 6: 1-2 sessions (dashboard + LLM updates)
-
----
-
-## RECOMMENDED EXECUTION ORDER
-
-| Order | Audit | Priority | Why |
-|-------|-------|----------|-----|
-| 1 | **Audit 1: Navigation Circling** | DONE ✓ | Waypoint completion fixed — vessels reach IDLE |
-| 2 | **Audit 6: Timing & Trajectory** | DONE ✓ | Heading wrapping, speed scaling, yaw noise, acceptance circle, pure pursuit |
-| 3 | **Audit 7: LLM Command Quality** | DONE ✓ | Waypoint clamping, asset ID validation, expanded prompt, timeout, retry variation |
-| 4 | **Audit 2: Land Avoidance** | DONE ✓ | Cape Cod polygon, land_check.py, heading correction in fleet_manager |
-| 5 | **Audit 4: Mission Lifecycle** | DONE ✓ | Intercept mission, Contact model, target simulation, API endpoints |
-| 6 | **Audit 3: GPS Denied** | DONE ✓ | Dead reckoning engine, DENIED mode affects navigation, drift accumulates |
-| 7 | **Audit 5: Dashboard & Ops Center** | HIGH — NEXT | Functional C2 dashboard — contacts on map, RTB control, scenario presets |
-
-**Current state (6 of 7 audits complete):** All backend systems operational — navigation, 
-land avoidance, LLM commands, intercept/contacts, GPS-denied dead reckoning. 147 tests passing. 
-Only dashboard remains.
-
-**Why Audit 5 is last:** All backend data is streaming via WebSocket. The dashboard needs to 
-actually USE it — contacts are invisible, no RTB button, GPS toggle missing DENIED state, 
-no waypoint visualization, no scenario presets. This is the final integration layer.
-
-## CRITICAL PHYSICS PARAMETERS TO KNOW
-
-These numbers define how the simulation ACTUALLY behaves. Every session that touches 
-navigation, physics, or timing needs to understand these:
-
-| Parameter | Value | Location | Effect |
-|-----------|-------|----------|--------|
-| Vessel speed | 5.0 m/s (commanded) | fleet_manager.py dispatch | ~18 km/h, ~10 knots |
-| Drone speed | 15.0 m/s (default) | ollama_client.py prompt | 54 km/h |
-| Simulation tick | 0.25s (dt) | ws.py | 4 Hz update rate |
-| Yaw time constant | 30.0s (t_psi) | vessel_dynamics.py | How fast rudder responds |
-| Max yaw rate | 11.5°/s | Derived: k_psi × SAT_AMP | From k_psi=0.01, SAT_AMP=20 |
-| 180° turn time | ~16 seconds | Derived | 80m traveled during turn at 5 m/s |
-| Speed time constant | 50.0s (t_v) | vessel_dynamics.py | u state ramp-up (BUT see note) |
-| Position uses u_c | COMMANDED speed | vessel_dynamics.py line 26 | Instant speed, no ramp |
-| Waypoint acceptance | 27m (50/1852 NMI) | planning.py | Reduced in Audit 6 from 108m |
-| Pure pursuit fallback | < 500m to waypoint | planning.py | Ignores cross-track, steers direct (Audit 6) |
-| Cross-track look-ahead | 2200m (2200/1852 NMI) | planning.py | Path correction distance (> 500m only) |
-| Actuator saturation | ±20 | fleet_manager.py SAT_AMP | Limits max rudder torque |
-| Yaw bias noise | 0.1 × randn() per tick | vessel_dynamics.py | Reduced in Audit 6 from 0.5 |
-| PID gains | kp=100, kd=-500, ki=0 | controller.py | Heading wrapping fixed in Audit 6 |
-| Speed scaling (turns) | max(0.3, 1.0 - 0.7×err/π) | fleet_manager.py | Slows to 30% at 180° error (Audit 6) |
-| Land avoidance look-ahead | 75m (1× and 2×) | fleet_manager.py → land_check.py | Checks 75m and 150m ahead (Audit 2) |
-
-**Speed vs Distance Quick Reference:**
-- 200m at 5 m/s = 40 seconds + turn time
-- 500m at 5 m/s = 100 seconds + turn time  
-- 1000m at 5 m/s = 200 seconds + turn time
-- A 90° course change adds ~8 seconds and ~40m of arc
-- A 180° course change adds ~16 seconds and ~80m of arc (or MUCH worse without heading wrapping fix)
-
-## TIPS FOR SAVING CREDITS
-
-- Run each audit as a SEPARATE Claude Code session (don't mix)
-- Copy the FULL audit prompt above — it has all the context Claude Code needs
-- After each audit produces fixes, COMMIT to git before starting the next
-- If an audit runs long, don't let it explore endlessly — if it hasn't found 
-  the fix in ~10 minutes of iteration, stop it and share the findings here 
-  so we can refine the prompt
-- Use `git diff` after each session to review what changed before accepting
-- **Always run the full test suite** after fixes: `.venv/bin/python -m pytest tests/ -v`
-- **Read CLAUDE.md first** — it has the project rules, file map, and unit conventions
-- The reference dump files are in `docs/reference/` — useful for full-text search 
-  but may be slightly stale compared to actual source files
+**THE KICKER (text overlay):**
+"Multi-domain autonomous C2. Natural language command. GPS-denied. Comms-denied. Predictive intercept. Cross-domain kill chain. Explainable decisions. Running fully air-gapped on Apple Silicon."
