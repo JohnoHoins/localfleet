@@ -89,6 +89,7 @@ export default function App() {
             contactTrails={contactTrails.current}
             activeMission={fleetState?.active_mission || null}
             threatAssessments={fleetState?.threat_assessments || []}
+            autonomy={fleetState?.autonomy || {}}
           />
         </div>
 

@@ -1,0 +1,20 @@
+{
+  "project": "localfleet",
+  "audits": {
+    "1": { "name": "Core Fleet Simulation", "status": "done" },
+    "2": { "name": "Navigation & Waypoints", "status": "done" },
+    "3": { "name": "Drone Integration", "status": "done" },
+    "4": { "name": "LLM Command Parsing", "status": "done" },
+    "5": { "name": "Dashboard & WebSocket", "status": "done" },
+    "6": { "name": "GPS-Denied Navigation", "status": "done" },
+    "7": { "name": "Contact Tracking", "status": "done" },
+    "8": { "name": "Predictive Intercept", "status": "done" },
+    "9": { "name": "Autonomous Threat Response", "status": "done" },
+    "10": { "name": "Comms-Denied Autonomy", "status": "done" },
+    "11": { "name": "Cross-Domain Kill Chain", "status": "done" },
+    "12": { "name": "Multi-Contact Prioritization", "status": "pending" },
+    "13": { "name": "Mission Replanning", "status": "pending" }
+  },
+  "tests_passing": 186,
+  "last_audit_commit": "e25bffd"
+}

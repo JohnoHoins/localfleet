@@ -113,7 +113,7 @@ function createInterceptIcon() {
   return L.divIcon({ html, className: '', iconSize: [20, 20], iconAnchor: [10, 10] })
 }
 
-export default function FleetMap({ assets, trails = {}, contacts = [], contactTrails = {}, activeMission = null, threatAssessments = [] }) {
+export default function FleetMap({ assets, trails = {}, contacts = [], contactTrails = {}, activeMission = null, threatAssessments = [], autonomy = {} }) {
   const center = useMemo(() => {
     if (!assets?.length) return [ORIGIN_LAT, ORIGIN_LNG]
     const avgX = assets.reduce((s, a) => s + a.x, 0) / assets.length
@@ -222,6 +222,19 @@ export default function FleetMap({ assets, trails = {}, contacts = [], contactTr
               </>
             )}
           </>
+        )
+      })()}
+
+      {/* Drone targeting line — yellow line when locked */}
+      {autonomy?.targeting?.locked && (() => {
+        const drone = assets.find(a => a.domain === 'air')
+        const targetContact = contacts.find(c => c.contact_id === autonomy.targeting.contact_id)
+        if (!drone || !targetContact) return null
+        return (
+          <Polyline
+            positions={[metersToLatLng(drone.x, drone.y), metersToLatLng(targetContact.x, targetContact.y)]}
+            pathOptions={{ color: '#eab308', weight: 2, dashArray: '6 3' }}
+          />
         )
       })()}
 

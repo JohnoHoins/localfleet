@@ -24,6 +24,7 @@ from src.utils.gps_denied import degrade_position, DeadReckoningState, dead_reck
 from src.fleet.drone_coordinator import DroneCoordinator
 from src.fleet.formations import apply_formation
 from src.fleet.threat_detector import assess_threats, ThreatAssessment
+from src.fleet.drone_sensor import drone_detect_contacts, TargetingData
 
 METERS_TO_NMI = 1.0 / 1852.0
 SAT_AMP = 20  # actuator saturation amplitude
@@ -104,6 +105,11 @@ class FleetManager:
         self.intercept_recommended: bool = False
         self.recommended_target: str | None = None
         self._threat_check_counter: int = 0
+
+        # Kill chain state
+        self.kill_chain_phase: str | None = None
+        self.kill_chain_target: str | None = None
+        self.targeting_data: TargetingData | None = None
 
         # Comms mode
         self.comms_mode: str = "full"
@@ -244,9 +250,19 @@ class FleetManager:
 
         target = min(self.contacts.values(),
                      key=lambda c: (c.x - cx) ** 2 + (c.y - cy) ** 2)
+
+        # Prefer drone targeting data when available
+        if self.targeting_data and self.targeting_data.locked:
+            target_for_intercept_x = self.targeting_data.contact_x
+            target_for_intercept_y = self.targeting_data.contact_y
+        else:
+            target_for_intercept_x = target.x
+            target_for_intercept_y = target.y
+
         pred_x, pred_y = compute_intercept_point(
             cx, cy, fleet_speed,
-            target.x, target.y, target.heading, target.speed,
+            target_for_intercept_x, target_for_intercept_y,
+            target.heading, target.speed,
         )
 
         # Only update if intercept point shifted more than threshold
@@ -351,8 +367,102 @@ class FleetManager:
         # Comms-denied autonomous behavior
         self._handle_comms_denied()
 
+        # Kill chain progression
+        self._advance_kill_chain()
+
+        # Continuous drone tracking — update TRACK target position
+        if (self.drone_coordinator._current_pattern == DronePattern.TRACK
+                and self.kill_chain_target
+                and self.kill_chain_target in self.contacts
+                and self._threat_check_counter == 0):
+            contact = self.contacts[self.kill_chain_target]
+            self.drone_coordinator.assign_pattern(
+                DronePattern.TRACK,
+                [Waypoint(x=contact.x, y=contact.y)],
+                altitude=100.0,
+            )
+
         # Drone
         self.drone.step(dt)
+
+    # ------------------------------------------------------------------
+    # Kill chain state machine
+    # ------------------------------------------------------------------
+    def _advance_kill_chain(self):
+        """Progress kill chain based on threat detector + drone sensor."""
+        if not self.contacts:
+            self.kill_chain_phase = None
+            self.kill_chain_target = None
+            self.targeting_data = None
+            return
+
+        # Run drone sensor
+        drone_hdg_rad = math.radians(90 - self.drone.heading) % (2 * math.pi)
+        detections = drone_detect_contacts(
+            self.drone.x, self.drone.y, drone_hdg_rad, self.contacts
+        )
+
+        # Update targeting data — best detection by confidence
+        if detections:
+            best = max(detections, key=lambda d: d.confidence)
+            if (self.drone_coordinator._current_pattern == DronePattern.TRACK
+                    and best.range_m < 3000.0):
+                best = TargetingData(
+                    contact_id=best.contact_id, bearing=best.bearing,
+                    range_m=best.range_m, contact_x=best.contact_x,
+                    contact_y=best.contact_y, confidence=best.confidence,
+                    locked=True,
+                )
+            self.targeting_data = best
+            self.kill_chain_target = best.contact_id
+        else:
+            self.targeting_data = None
+
+        # Phase transitions
+        if self.kill_chain_phase is None:
+            real_threats = [t for t in self.threat_assessments
+                            if t.threat_level != "none"]
+            if real_threats:
+                self.kill_chain_phase = "DETECT"
+                self.kill_chain_target = real_threats[0].contact_id
+
+        elif self.kill_chain_phase == "DETECT":
+            if self.drone_coordinator._current_pattern == DronePattern.TRACK:
+                self.kill_chain_phase = "TRACK"
+
+        elif self.kill_chain_phase == "TRACK":
+            if self.targeting_data and self.targeting_data.locked:
+                self.kill_chain_phase = "LOCK"
+
+        elif self.kill_chain_phase == "LOCK":
+            if self.active_mission == MissionType.INTERCEPT:
+                self.kill_chain_phase = "ENGAGE"
+
+        elif self.kill_chain_phase == "ENGAGE":
+            target = self.contacts.get(self.kill_chain_target)
+            if target:
+                for v in self.vessels.values():
+                    dist = math.sqrt(
+                        (v["state"][0] - target.x) ** 2 +
+                        (v["state"][1] - target.y) ** 2
+                    )
+                    if dist < 1000.0:
+                        self.kill_chain_phase = "CONVERGE"
+                        break
+
+        elif self.kill_chain_phase == "CONVERGE":
+            target = self.contacts.get(self.kill_chain_target)
+            if not target:
+                self.kill_chain_phase = None
+            else:
+                for v in self.vessels.values():
+                    dist = math.sqrt(
+                        (v["state"][0] - target.x) ** 2 +
+                        (v["state"][1] - target.y) ** 2
+                    )
+                    if dist < 200.0:
+                        self.kill_chain_phase = None
+                        break
 
     # ------------------------------------------------------------------
     # Threat detection & auto-response
@@ -472,7 +582,17 @@ class FleetManager:
             "comms_denied_duration": elapsed,
             "comms_lost_behavior": self.comms_lost_behavior,
             "autonomous_actions": self.autonomous_actions[-10:],
+            "kill_chain_phase": self.kill_chain_phase,
+            "kill_chain_target": self.kill_chain_target,
         }
+        if self.targeting_data:
+            data["autonomy"]["targeting"] = {
+                "contact_id": self.targeting_data.contact_id,
+                "bearing_deg": (90 - math.degrees(self.targeting_data.bearing)) % 360,
+                "range_m": self.targeting_data.range_m,
+                "confidence": self.targeting_data.confidence,
+                "locked": self.targeting_data.locked,
+            }
 
         return data
 

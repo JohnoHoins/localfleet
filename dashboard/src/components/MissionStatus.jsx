@@ -1,5 +1,13 @@
 const GPS_COLORS = { full: '#22c55e', degraded: '#f59e0b', denied: '#ef4444' }
 
+const KILL_CHAIN_COLORS = {
+  DETECT: '#eab308',   // yellow
+  TRACK: '#f59e0b',    // amber
+  LOCK: '#f97316',     // orange
+  ENGAGE: '#ef4444',   // red
+  CONVERGE: '#dc2626', // deep red
+}
+
 export default function MissionStatus({ fleetState, contacts = [] }) {
   if (!fleetState) return null
 
@@ -11,6 +19,9 @@ export default function MissionStatus({ fleetState, contacts = [] }) {
   const interceptRecommended = fleetState.intercept_recommended || false
   const recommendedTarget = fleetState.recommended_target || null
   const autonomy = fleetState.autonomy || {}
+  const killChainPhase = autonomy.kill_chain_phase || null
+  const killChainTarget = autonomy.kill_chain_target || null
+  const targeting = autonomy.targeting || null
   const commsMode = autonomy.comms_mode || 'full'
   const commsDeniedDuration = autonomy.comms_denied_duration || 0
   const autonomousActions = autonomy.autonomous_actions || []
@@ -82,6 +93,26 @@ export default function MissionStatus({ fleetState, contacts = [] }) {
       {interceptRecommended && (
         <div className="mt-1.5 text-xs font-bold text-red-400 animate-pulse">
           INTERCEPT RECOMMENDED — {recommendedTarget?.toUpperCase()}
+        </div>
+      )}
+
+      {killChainPhase && (
+        <div className="mt-1.5 border border-slate-700 rounded p-2 bg-slate-900/50">
+          <div className="flex items-center gap-2">
+            <span className="w-2 h-2 rounded-full" style={{ backgroundColor: KILL_CHAIN_COLORS[killChainPhase] || '#6b7280' }} />
+            <span className="text-xs font-bold tracking-wider" style={{ color: KILL_CHAIN_COLORS[killChainPhase] || '#6b7280' }}>
+              KILL CHAIN: {killChainPhase}
+            </span>
+            {killChainTarget && (
+              <span className="text-[10px] text-slate-500">/ {killChainTarget.toUpperCase()}</span>
+            )}
+          </div>
+          {targeting && (
+            <div className="text-[10px] text-slate-400 mt-0.5">
+              BRG: {targeting.bearing_deg?.toFixed(0)}° RNG: {(targeting.range_m / 1000).toFixed(1)}km CONF: {(targeting.confidence * 100).toFixed(0)}%
+              {targeting.locked && <span className="text-yellow-400 ml-1 font-bold">LOCKED</span>}
+            </div>
+          )}
         </div>
       )}
 
