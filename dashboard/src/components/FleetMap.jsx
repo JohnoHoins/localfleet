@@ -1,4 +1,4 @@
-import { MapContainer, TileLayer, Marker, Popup, Circle, Polyline, useMap } from 'react-leaflet'
+import { MapContainer, TileLayer, Marker, Popup, Circle, Polyline, Polygon, useMap } from 'react-leaflet'
 import L from 'leaflet'
 import { useEffect, useMemo } from 'react'
 
@@ -36,6 +36,36 @@ function createIcon(domain, heading, label) {
   })
 }
 
+function createContactIcon(heading, label) {
+  const color = '#ef4444'
+  const shape = `<polygon points="16,2 4,28 28,28" fill="${color}" stroke="#fff" stroke-width="0.5" opacity="0.9"/>`
+
+  const html = `<div style="display:flex;flex-direction:column;align-items:center">
+    <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32"
+      style="transform:rotate(${heading}deg);filter:drop-shadow(0 0 3px ${color})">
+      ${shape}
+    </svg>
+    <span style="font-size:9px;color:${color};font-weight:bold;text-shadow:0 0 4px #000,0 0 4px #000;white-space:nowrap;margin-top:2px">${label}</span>
+  </div>`
+
+  return L.divIcon({
+    html,
+    className: '',
+    iconSize: [32, 48],
+    iconAnchor: [16, 16],
+  })
+}
+
+// Cape Cod coastline polygon (lat, lng) from land_check.py
+const CAPE_COD_LATLNG = [
+  [41.74, -70.62], [41.67, -70.52], [41.63, -70.30], [41.65, -70.00],
+  [41.67, -69.95], [41.70, -69.94], [41.80, -69.96], [41.88, -69.97],
+  [41.93, -69.97], [42.00, -70.03], [42.04, -70.08], [42.06, -70.17],
+  [42.07, -70.21], [42.05, -70.25], [42.03, -70.19], [41.98, -70.10],
+  [41.92, -70.07], [41.85, -70.05], [41.77, -70.06], [41.73, -70.10],
+  [41.73, -70.20], [41.73, -70.40], [41.76, -70.55], [41.77, -70.62],
+]
+
 function FitBounds({ assets }) {
   const map = useMap()
   useEffect(() => {
@@ -51,7 +81,7 @@ const TRAIL_COLORS = {
   air: '#06b6d480',
 }
 
-export default function FleetMap({ assets, trails = {} }) {
+export default function FleetMap({ assets, trails = {}, contacts = [], contactTrails = {} }) {
   const center = useMemo(() => {
     if (!assets?.length) return [ORIGIN_LAT, ORIGIN_LNG]
     const avgX = assets.reduce((s, a) => s + a.x, 0) / assets.length
@@ -69,7 +99,14 @@ export default function FleetMap({ assets, trails = {} }) {
         className="dark-map-tiles"
       />
       <FitBounds assets={assets} />
-      {/* Trail lines */}
+
+      {/* Coastline overlay */}
+      <Polygon
+        positions={CAPE_COD_LATLNG}
+        pathOptions={{ color: '#92400e', fillColor: '#92400e', fillOpacity: 0.15, weight: 1.5 }}
+      />
+
+      {/* Asset trail lines */}
       {assets.map((asset) => {
         const trail = trails[asset.asset_id]
         if (!trail || trail.length < 2) return null
@@ -86,6 +123,34 @@ export default function FleetMap({ assets, trails = {} }) {
           />
         )
       })}
+
+      {/* Contact trail lines */}
+      {contacts.map((contact) => {
+        const trail = contactTrails[contact.contact_id]
+        if (!trail || trail.length < 2) return null
+        const positions = trail.map(([x, y]) => metersToLatLng(x, y))
+        return (
+          <Polyline
+            key={`ctrail-${contact.contact_id}`}
+            positions={positions}
+            pathOptions={{ color: '#ef444480', weight: 2, dashArray: '4 4' }}
+          />
+        )
+      })}
+
+      {/* Fleet-to-contact line */}
+      {contacts.length > 0 && assets.length > 0 && (() => {
+        const avgX = assets.reduce((s, a) => s + a.x, 0) / assets.length
+        const avgY = assets.reduce((s, a) => s + a.y, 0) / assets.length
+        const c = contacts[0]
+        return (
+          <Polyline
+            positions={[metersToLatLng(avgX, avgY), metersToLatLng(c.x, c.y)]}
+            pathOptions={{ color: '#ef444440', weight: 1, dashArray: '2 6' }}
+          />
+        )
+      })()}
+
       {/* Asset markers */}
       {assets.map((asset) => {
         const pos = metersToLatLng(asset.x, asset.y)
@@ -96,6 +161,14 @@ export default function FleetMap({ assets, trails = {} }) {
                 center={pos}
                 radius={asset.position_accuracy}
                 pathOptions={{ color: '#f59e0b', fillColor: '#f59e0b', fillOpacity: 0.15, weight: 1 }}
+                className="gps-uncertainty-ring"
+              />
+            )}
+            {asset.gps_mode === 'denied' && (
+              <Circle
+                center={pos}
+                radius={asset.position_accuracy}
+                pathOptions={{ color: '#ef4444', fillColor: '#ef4444', fillOpacity: 0.1, weight: 1 }}
                 className="gps-uncertainty-ring"
               />
             )}
@@ -113,6 +186,27 @@ export default function FleetMap({ assets, trails = {} }) {
               </Popup>
             </Marker>
           </span>
+        )
+      })}
+
+      {/* Contact markers */}
+      {contacts.map((contact) => {
+        const pos = metersToLatLng(contact.x, contact.y)
+        const nautHdg = ((90 - contact.heading * 180 / Math.PI) % 360 + 360) % 360
+        return (
+          <Marker
+            key={`contact-${contact.contact_id}`}
+            position={pos}
+            icon={createContactIcon(nautHdg, contact.contact_id.toUpperCase())}
+          >
+            <Popup className="c2-popup">
+              <div className="text-xs" style={{ color: '#0b0f19' }}>
+                <div className="font-bold text-sm text-red-600">{contact.contact_id.toUpperCase()}</div>
+                <div>CONTACT — {contact.domain?.toUpperCase() || 'SURFACE'}</div>
+                <div>SPD: {contact.speed.toFixed(1)} m/s HDG: {nautHdg.toFixed(0)}°</div>
+              </div>
+            </Popup>
+          </Marker>
         )
       })}
     </MapContainer>
