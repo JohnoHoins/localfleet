@@ -25,6 +25,7 @@ from src.fleet.drone_coordinator import DroneCoordinator
 from src.fleet.formations import apply_formation
 from src.fleet.threat_detector import assess_threats, ThreatAssessment
 from src.fleet.drone_sensor import drone_detect_contacts, TargetingData
+from src.fleet.decision_log import DecisionLog
 
 METERS_TO_NMI = 1.0 / 1852.0
 SAT_AMP = 20  # actuator saturation amplitude
@@ -118,6 +119,9 @@ class FleetManager:
         self.autonomous_actions: list[str] = []
         AUTONOMOUS_ESCALATION_DELAY = 60.0  # seconds before auto-engage
 
+        # Decision audit trail
+        self.decision_log = DecisionLog()
+
     # ------------------------------------------------------------------
     # Contact (target) management
     # ------------------------------------------------------------------
@@ -162,6 +166,20 @@ class FleetManager:
                 pred_x, pred_y = compute_intercept_point(
                     cx, cy, fleet_speed,
                     target.x, target.y, target.heading, target.speed,
+                )
+
+                # Log intercept solution
+                dist = math.sqrt((pred_x - cx)**2 + (pred_y - cy)**2)
+                eta = dist / fleet_speed if fleet_speed > 0 else 0
+                lead = math.sqrt((pred_x - target.x)**2 + (pred_y - target.y)**2)
+                self.decision_log.log(
+                    "intercept_solution",
+                    f"Intercept: ({pred_x:.0f}, {pred_y:.0f})",
+                    f"Target {target.contact_id} at ({target.x:.0f}, {target.y:.0f}) "
+                    f"hdg {math.degrees(target.heading):.0f}° spd {target.speed:.1f}m/s. "
+                    f"Fleet centroid ({cx:.0f}, {cy:.0f}). ETA {eta:.0f}s. Lead {lead:.0f}m.",
+                    confidence=min(1.0, fleet_speed / max(target.speed, 0.1)),
+                    assets=[ac.asset_id for ac in surface_cmds],
                 )
 
                 # Replace surface vessel waypoints with predicted intercept point
@@ -275,6 +293,12 @@ class FleetManager:
             cur_wp_y = wpts_y[-1] / METERS_TO_NMI
             shift = math.sqrt((pred_x - cur_wp_x) ** 2 + (pred_y - cur_wp_y) ** 2)
             if shift > REPLAN_SHIFT_THRESHOLD:
+                self.decision_log.log(
+                    "replan",
+                    f"Waypoints shifted {shift:.0f}m",
+                    f"({cur_wp_x:.0f},{cur_wp_y:.0f}) → ({pred_x:.0f},{pred_y:.0f}). "
+                    f"Target moved since last plan.",
+                )
                 wpts_x[-1] = pred_x * METERS_TO_NMI
                 wpts_y[-1] = pred_y * METERS_TO_NMI
 
@@ -419,6 +443,7 @@ class FleetManager:
             self.targeting_data = None
 
         # Phase transitions
+        old_phase = self.kill_chain_phase
         if self.kill_chain_phase is None:
             real_threats = [t for t in self.threat_assessments
                             if t.threat_level != "none"]
@@ -464,6 +489,14 @@ class FleetManager:
                         self.kill_chain_phase = None
                         break
 
+        if self.kill_chain_phase != old_phase and self.kill_chain_phase is not None:
+            self.decision_log.log(
+                "kill_chain_transition",
+                f"Kill chain: {old_phase or 'NONE'} → {self.kill_chain_phase}",
+                f"Target: {self.kill_chain_target}. "
+                f"Drone {'locked' if self.targeting_data and self.targeting_data.locked else 'searching'}.",
+            )
+
     # ------------------------------------------------------------------
     # Threat detection & auto-response
     # ------------------------------------------------------------------
@@ -486,6 +519,14 @@ class FleetManager:
                 self.intercept_recommended = True
                 self.recommended_target = ta.contact_id
 
+            if ta.threat_level in ("warning", "critical"):
+                self.decision_log.log(
+                    "threat_assessment",
+                    f"{ta.contact_id}: {ta.threat_level.upper()} {ta.distance:.0f}m",
+                    ta.reason,
+                    confidence=1.0 - (ta.distance / 8000.0),
+                )
+
             if ta.threat_level in ("warning", "critical") and not active_intercept:
                 # Auto-retask drone to TRACK if idle or not already tracking
                 if self.drone.status in (AssetStatus.IDLE,) or (
@@ -500,6 +541,14 @@ class FleetManager:
                             altitude=100.0,
                         )
                         self.drone.status = AssetStatus.EXECUTING
+                        self.decision_log.log(
+                            "auto_track",
+                            f"Eagle-1 → TRACK {ta.contact_id}",
+                            f"Contact {ta.distance:.0f}m ({ta.threat_level}). Fleet "
+                            f"{'idle' if not active_intercept else 'not intercepting'}. "
+                            f"Drone fastest asset (15 m/s), aerial advantage.",
+                            assets=["eagle-1"],
+                        )
 
     # ------------------------------------------------------------------
     # State query
@@ -572,6 +621,7 @@ class FleetManager:
         ]
         data["intercept_recommended"] = self.intercept_recommended
         data["recommended_target"] = self.recommended_target
+        data["decisions"] = self.decision_log.to_dicts(n=10)
 
         # Comms state
         elapsed = 0.0
@@ -695,6 +745,12 @@ class FleetManager:
     def _execute_comms_fallback(self, trigger: str):
         """Execute comms_lost_behavior standing orders."""
         behavior = self.comms_lost_behavior
+        self.decision_log.log(
+            "comms_fallback",
+            f"AUTO-{behavior.upper()}: {trigger}",
+            f"Comms denied. Standing orders: {behavior}.",
+            confidence=1.0,
+        )
         if behavior == "return_to_base":
             # Check if already returning
             if any(v["status"] == AssetStatus.RETURNING for v in self.vessels.values()):
@@ -731,8 +787,16 @@ class FleetManager:
             assets=surface_cmds,
             formation=self.formation,
         )
-        self.dispatch_command(cmd)
         elapsed = time.time() - (self.comms_denied_since or time.time())
+        self.decision_log.log(
+            "auto_engage",
+            f"AUTO-INTERCEPT: {target_id}",
+            f"Comms denied {elapsed:.0f}s. {target_id} critical range. "
+            f"No operator. Timeout escalation.",
+            confidence=0.7,
+            assets=list(self.vessels.keys()) + ["eagle-1"],
+        )
+        self.dispatch_command(cmd)
         self.autonomous_actions.append(
             f"AUTO-INTERCEPT: {target_id} at ({contact.x:.0f}, {contact.y:.0f}) "
             f"— comms denied {elapsed:.0f}s, threat critical, no operator"

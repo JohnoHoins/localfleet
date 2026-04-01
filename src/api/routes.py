@@ -120,6 +120,27 @@ def create_router() -> APIRouter:
         return {"success": True, "fleet_command": cmd.model_dump()}
 
     # ------------------------------------------------------------------
+    # Decision audit trail
+    # ------------------------------------------------------------------
+
+    @router.get("/decisions")
+    async def get_decisions(request: Request,
+                            limit: int = Query(50),
+                            dtype: Optional[str] = Query(None, alias="type")):
+        fm = request.app.state.commander.fleet_manager
+        if dtype:
+            entries = fm.decision_log.get_by_type(dtype)[-limit:]
+        else:
+            entries = fm.decision_log.get_recent(limit)
+        return {"decisions": [
+            {"id": e.id, "timestamp": e.timestamp, "type": e.decision_type,
+             "action": e.action_taken, "rationale": e.rationale,
+             "confidence": e.confidence, "assets": e.assets_involved,
+             "alternatives": e.alternatives, "parent_id": e.parent_id}
+            for e in entries
+        ]}
+
+    # ------------------------------------------------------------------
     # Contacts (simulated targets)
     # ------------------------------------------------------------------
 
