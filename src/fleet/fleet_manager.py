@@ -26,6 +26,27 @@ from src.fleet.formations import apply_formation
 
 METERS_TO_NMI = 1.0 / 1852.0
 SAT_AMP = 20  # actuator saturation amplitude
+REPLAN_INTERVAL_STEPS = 40  # 10 seconds at 4Hz
+REPLAN_SHIFT_THRESHOLD = 100.0  # meters — only update if intercept drifted this much
+
+
+def compute_intercept_point(fleet_x: float, fleet_y: float, fleet_speed: float,
+                            target_x: float, target_y: float, target_heading: float,
+                            target_speed: float) -> tuple[float, float]:
+    """Iterative proportional navigation — predict where the target will be
+    when the fleet arrives and return that point."""
+    if fleet_speed <= 0:
+        return (target_x, target_y)
+
+    pred_x, pred_y = target_x, target_y
+    for _ in range(3):
+        dist = math.sqrt((pred_x - fleet_x) ** 2 + (pred_y - fleet_y) ** 2)
+        if dist < 1.0:
+            break
+        t = dist / fleet_speed
+        pred_x = target_x + target_speed * math.cos(target_heading) * t
+        pred_y = target_y + target_speed * math.sin(target_heading) * t
+    return (pred_x, pred_y)
 
 
 class FleetManager:
@@ -74,6 +95,7 @@ class FleetManager:
         self.active_mission: MissionType | None = None
         self.formation = FormationType.INDEPENDENT
         self.comms_lost_behavior: str = "return_to_base"
+        self._replan_counter: int = 0
 
     # ------------------------------------------------------------------
     # Contact (target) management
@@ -100,6 +122,30 @@ class FleetManager:
         self.active_mission = cmd.mission_type
         self.formation = cmd.formation
         self.comms_lost_behavior = cmd.comms_lost_behavior
+        self._replan_counter = 0
+
+        # --- Predictive intercept: replace surface waypoints with predicted point ---
+        if cmd.mission_type == MissionType.INTERCEPT and self.contacts:
+            # Find closest contact to fleet centroid
+            surface_cmds = [ac for ac in cmd.assets
+                            if ac.domain == DomainType.SURFACE and ac.asset_id in self.vessels]
+            if surface_cmds:
+                cx = np.mean([self.vessels[ac.asset_id]["state"][0] for ac in surface_cmds])
+                cy = np.mean([self.vessels[ac.asset_id]["state"][1] for ac in surface_cmds])
+                fleet_speed = surface_cmds[0].speed if surface_cmds[0].speed > 0 else 8.0
+
+                # Pick closest contact
+                target = min(self.contacts.values(),
+                             key=lambda c: (c.x - cx) ** 2 + (c.y - cy) ** 2)
+                pred_x, pred_y = compute_intercept_point(
+                    cx, cy, fleet_speed,
+                    target.x, target.y, target.heading, target.speed,
+                )
+
+                # Replace surface vessel waypoints with predicted intercept point
+                for ac in cmd.assets:
+                    if ac.domain == DomainType.SURFACE and ac.asset_id in self.vessels:
+                        ac.waypoints = [Waypoint(x=pred_x, y=pred_y)]
 
         # --- Apply formation offsets for surface vessels ---
         surface_cmds = [ac for ac in cmd.assets
@@ -161,6 +207,44 @@ class FleetManager:
                     self.drone.set_waypoints(ac.waypoints, ac.drone_pattern)
                     if ac.altitude is not None:
                         self.drone.target_altitude = ac.altitude
+
+    # ------------------------------------------------------------------
+    # Intercept replanning
+    # ------------------------------------------------------------------
+    def _replan_intercept(self):
+        """Recompute predicted intercept point and update surface vessel
+        waypoints if the point has shifted significantly."""
+        executing = {vid: v for vid, v in self.vessels.items()
+                     if v["status"] == AssetStatus.EXECUTING}
+        if not executing:
+            return
+
+        cx = np.mean([v["state"][0] for v in executing.values()])
+        cy = np.mean([v["state"][1] for v in executing.values()])
+        # Use first executing vessel's desired speed
+        fleet_speed = next(iter(executing.values()))["desired_speed"]
+        if fleet_speed <= 0:
+            return
+
+        target = min(self.contacts.values(),
+                     key=lambda c: (c.x - cx) ** 2 + (c.y - cy) ** 2)
+        pred_x, pred_y = compute_intercept_point(
+            cx, cy, fleet_speed,
+            target.x, target.y, target.heading, target.speed,
+        )
+
+        # Only update if intercept point shifted more than threshold
+        for vid, v in executing.items():
+            wpts_x = v["waypoints_x"]
+            wpts_y = v["waypoints_y"]
+            if len(wpts_x) < 2:
+                continue
+            cur_wp_x = wpts_x[-1] / METERS_TO_NMI  # convert nmi back to meters
+            cur_wp_y = wpts_y[-1] / METERS_TO_NMI
+            shift = math.sqrt((pred_x - cur_wp_x) ** 2 + (pred_y - cur_wp_y) ** 2)
+            if shift > REPLAN_SHIFT_THRESHOLD:
+                wpts_x[-1] = pred_x * METERS_TO_NMI
+                wpts_y[-1] = pred_y * METERS_TO_NMI
 
     # ------------------------------------------------------------------
     # Simulation step
@@ -232,6 +316,15 @@ class FleetManager:
         for contact in self.contacts.values():
             contact.x += contact.speed * math.cos(contact.heading) * dt
             contact.y += contact.speed * math.sin(contact.heading) * dt
+
+        # Intercept replanning — update predicted intercept point every ~10s
+        if (self.active_mission == MissionType.INTERCEPT
+                and self.contacts
+                and any(v["status"] == AssetStatus.EXECUTING for v in self.vessels.values())):
+            self._replan_counter += 1
+            if self._replan_counter >= REPLAN_INTERVAL_STEPS:
+                self._replan_counter = 0
+                self._replan_intercept()
 
         # Drone
         self.drone.step(dt)

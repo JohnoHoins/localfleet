@@ -81,7 +81,31 @@ const TRAIL_COLORS = {
   air: '#06b6d480',
 }
 
-export default function FleetMap({ assets, trails = {}, contacts = [], contactTrails = {} }) {
+function computeInterceptPoint(fleetX, fleetY, fleetSpeed, tX, tY, tHdg, tSpd) {
+  if (fleetSpeed <= 0) return null
+  let predX = tX, predY = tY
+  for (let i = 0; i < 3; i++) {
+    const dist = Math.sqrt((predX - fleetX) ** 2 + (predY - fleetY) ** 2)
+    if (dist < 1) break
+    const t = dist / fleetSpeed
+    predX = tX + tSpd * Math.cos(tHdg) * t
+    predY = tY + tSpd * Math.sin(tHdg) * t
+  }
+  return [predX, predY]
+}
+
+function createInterceptIcon() {
+  const html = `<div style="display:flex;align-items:center;justify-content:center">
+    <svg width="20" height="20" viewBox="0 0 20 20">
+      <circle cx="10" cy="10" r="8" fill="none" stroke="#f59e0b" stroke-width="2" stroke-dasharray="3 2"/>
+      <line x1="10" y1="2" x2="10" y2="18" stroke="#f59e0b" stroke-width="1.5"/>
+      <line x1="2" y1="10" x2="18" y2="10" stroke="#f59e0b" stroke-width="1.5"/>
+    </svg>
+  </div>`
+  return L.divIcon({ html, className: '', iconSize: [20, 20], iconAnchor: [10, 10] })
+}
+
+export default function FleetMap({ assets, trails = {}, contacts = [], contactTrails = {}, activeMission = null }) {
   const center = useMemo(() => {
     if (!assets?.length) return [ORIGIN_LAT, ORIGIN_LNG]
     const avgX = assets.reduce((s, a) => s + a.x, 0) / assets.length
@@ -138,16 +162,39 @@ export default function FleetMap({ assets, trails = {}, contacts = [], contactTr
         )
       })}
 
-      {/* Fleet-to-contact line */}
+      {/* Fleet-to-contact line + intercept geometry */}
       {contacts.length > 0 && assets.length > 0 && (() => {
-        const avgX = assets.reduce((s, a) => s + a.x, 0) / assets.length
-        const avgY = assets.reduce((s, a) => s + a.y, 0) / assets.length
+        const surfaceAssets = assets.filter(a => a.domain === 'surface')
+        const avgX = surfaceAssets.length > 0
+          ? surfaceAssets.reduce((s, a) => s + a.x, 0) / surfaceAssets.length
+          : assets.reduce((s, a) => s + a.x, 0) / assets.length
+        const avgY = surfaceAssets.length > 0
+          ? surfaceAssets.reduce((s, a) => s + a.y, 0) / surfaceAssets.length
+          : assets.reduce((s, a) => s + a.y, 0) / assets.length
         const c = contacts[0]
+        const intercept = (activeMission === 'intercept' && c.speed > 0)
+          ? computeInterceptPoint(avgX, avgY, 8.0, c.x, c.y, c.heading, c.speed)
+          : null
         return (
-          <Polyline
-            positions={[metersToLatLng(avgX, avgY), metersToLatLng(c.x, c.y)]}
-            pathOptions={{ color: '#ef444440', weight: 1, dashArray: '2 6' }}
-          />
+          <>
+            <Polyline
+              positions={[metersToLatLng(avgX, avgY), metersToLatLng(c.x, c.y)]}
+              pathOptions={{ color: '#ef444440', weight: 1, dashArray: '2 6' }}
+            />
+            {intercept && (
+              <>
+                <Polyline
+                  positions={[metersToLatLng(c.x, c.y), metersToLatLng(intercept[0], intercept[1])]}
+                  pathOptions={{ color: '#f59e0b80', weight: 1.5, dashArray: '4 4' }}
+                />
+                <Polyline
+                  positions={[metersToLatLng(avgX, avgY), metersToLatLng(intercept[0], intercept[1])]}
+                  pathOptions={{ color: '#f59e0b60', weight: 1, dashArray: '6 4' }}
+                />
+                <Marker position={metersToLatLng(intercept[0], intercept[1])} icon={createInterceptIcon()} />
+              </>
+            )}
+          </>
         )
       })()}
 

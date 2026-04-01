@@ -1,6 +1,7 @@
-"""Tests for Audit 4 — Mission Lifecycle & Target Intercept."""
+"""Tests for Audit 4 — Mission Lifecycle & Target Intercept
+   + Audit 8 — Predictive Intercept."""
 import math
-from src.fleet.fleet_manager import FleetManager
+from src.fleet.fleet_manager import FleetManager, compute_intercept_point
 from src.schemas import (
     FleetCommand, AssetCommand, Waypoint,
     DomainType, MissionType, FormationType, AssetStatus, DronePattern,
@@ -185,3 +186,139 @@ def test_intercept_mission_vessels_converge():
     # Contact should have moved (it's heading East at 2 m/s)
     c = fm.contacts["bogey-1"]
     assert c.x > target_x, "Contact should have moved east from spawn point"
+
+
+# ===================================================================
+# Audit 8 — Predictive Intercept Tests
+# ===================================================================
+
+def test_compute_intercept_point_stationary():
+    """Stationary contact → intercept point IS the contact position."""
+    ix, iy = compute_intercept_point(
+        fleet_x=0.0, fleet_y=0.0, fleet_speed=8.0,
+        target_x=2000.0, target_y=0.0, target_heading=0.0, target_speed=0.0,
+    )
+    assert abs(ix - 2000.0) < 1.0
+    assert abs(iy - 0.0) < 1.0
+
+
+def test_compute_intercept_point_moving():
+    """Moving contact heading west → intercept point west of current position."""
+    ix, iy = compute_intercept_point(
+        fleet_x=0.0, fleet_y=0.0, fleet_speed=8.0,
+        target_x=2000.0, target_y=0.0,
+        target_heading=math.pi,  # west
+        target_speed=2.0,
+    )
+    assert ix < 2000.0, f"Intercept x={ix:.0f} should be west of 2000"
+
+
+def test_intercept_dispatch_uses_prediction():
+    """Dispatching intercept with a moving contact should place waypoints
+    ahead of the contact, not at its current position."""
+    fm = FleetManager()
+    fm.spawn_contact("bogey-1", x=3000.0, y=0.0,
+                      heading=math.pi, speed=2.0)  # heading west
+
+    cmd = FleetCommand(
+        mission_type=MissionType.INTERCEPT,
+        assets=[
+            AssetCommand(asset_id="alpha", domain=DomainType.SURFACE,
+                         waypoints=[Waypoint(x=3000.0, y=0.0)], speed=8.0),
+            AssetCommand(asset_id="bravo", domain=DomainType.SURFACE,
+                         waypoints=[Waypoint(x=3000.0, y=0.0)], speed=8.0),
+        ],
+        formation=FormationType.INDEPENDENT,
+    )
+    fm.dispatch_command(cmd)
+
+    # Final waypoint (in nmi) should be west of 3000m
+    for vid in ("alpha", "bravo"):
+        final_wp_x_m = fm.vessels[vid]["waypoints_x"][-1] * 1852.0
+        assert final_wp_x_m < 3000.0, (
+            f"{vid} waypoint x={final_wp_x_m:.0f}m should be < 3000 (predicted ahead)"
+        )
+
+
+def test_intercept_replan_updates_waypoints():
+    """After running steps, replanning should shift waypoints as contact moves.
+    We use a contact that changes heading mid-run to force a large shift."""
+    fm = FleetManager()
+    fm.spawn_contact("bogey-1", x=5000.0, y=0.0,
+                      heading=math.pi, speed=3.0)  # heading west
+
+    cmd = FleetCommand(
+        mission_type=MissionType.INTERCEPT,
+        assets=[
+            AssetCommand(asset_id="alpha", domain=DomainType.SURFACE,
+                         waypoints=[Waypoint(x=5000.0, y=0.0)], speed=8.0),
+            AssetCommand(asset_id="bravo", domain=DomainType.SURFACE,
+                         waypoints=[Waypoint(x=5000.0, y=0.0)], speed=8.0),
+            AssetCommand(asset_id="charlie", domain=DomainType.SURFACE,
+                         waypoints=[Waypoint(x=5000.0, y=0.0)], speed=8.0),
+        ],
+        formation=FormationType.INDEPENDENT,
+    )
+    fm.dispatch_command(cmd)
+
+    initial_wp_x = fm.vessels["alpha"]["waypoints_x"][-1]
+
+    # Run 30 steps, then change contact heading to force a large intercept shift
+    dt = 0.25
+    for _ in range(30):
+        fm.step(dt)
+
+    # Change contact heading to north — prediction should shift dramatically
+    fm.contacts["bogey-1"].heading = math.pi / 2  # north
+    fm.contacts["bogey-1"].speed = 5.0
+
+    # Run enough steps to trigger replan
+    for _ in range(50):
+        fm.step(dt)
+
+    updated_wp_x = fm.vessels["alpha"]["waypoints_x"][-1]
+    assert updated_wp_x != initial_wp_x, (
+        "Waypoint should have been updated by replanning"
+    )
+
+
+def test_fleet_converges_on_moving_target():
+    """Integration: fleet predicted intercept should get vessels much closer
+    to a moving contact than they would be without prediction.
+    Verify fleet arrives near the contact's predicted position."""
+    fm = FleetManager()
+    # Contact at (4000, 0) heading west at 1.5 m/s — simpler geometry
+    fm.spawn_contact("bogey-1", x=4000.0, y=0.0,
+                      heading=math.pi, speed=1.5)
+
+    cmd = FleetCommand(
+        mission_type=MissionType.INTERCEPT,
+        assets=[
+            AssetCommand(asset_id="alpha", domain=DomainType.SURFACE,
+                         waypoints=[Waypoint(x=4000.0, y=0.0)], speed=8.0),
+            AssetCommand(asset_id="bravo", domain=DomainType.SURFACE,
+                         waypoints=[Waypoint(x=4000.0, y=0.0)], speed=8.0),
+            AssetCommand(asset_id="charlie", domain=DomainType.SURFACE,
+                         waypoints=[Waypoint(x=4000.0, y=0.0)], speed=8.0),
+            AssetCommand(asset_id="eagle-1", domain=DomainType.AIR,
+                         waypoints=[Waypoint(x=4000.0, y=0.0)], speed=15.0,
+                         altitude=100.0, drone_pattern=DronePattern.TRACK),
+        ],
+        formation=FormationType.INDEPENDENT,
+    )
+    fm.dispatch_command(cmd)
+
+    # Track minimum distance between any vessel and the contact
+    dt = 0.25
+    min_dist_ever = float('inf')
+    for _ in range(2000):
+        fm.step(dt)
+        c = fm.contacts["bogey-1"]
+        for vid in ("alpha", "bravo", "charlie"):
+            s = fm.vessels[vid]["state"]
+            dist = math.sqrt((s[0] - c.x) ** 2 + (s[1] - c.y) ** 2)
+            min_dist_ever = min(min_dist_ever, dist)
+
+    assert min_dist_ever < 500.0, (
+        f"Closest approach was {min_dist_ever:.0f}m — should be < 500m"
+    )

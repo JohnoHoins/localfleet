@@ -73,6 +73,7 @@ export default function App() {
             trails={trails.current}
             contacts={contacts}
             contactTrails={contactTrails.current}
+            activeMission={fleetState?.active_mission || null}
           />
         </div>
 
