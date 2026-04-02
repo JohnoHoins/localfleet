@@ -243,20 +243,11 @@ export default function FleetMap({ assets, trails = {}, contacts = [], contactTr
         const pos = metersToLatLng(asset.x, asset.y)
         return (
           <span key={asset.asset_id}>
-            {asset.gps_mode === 'degraded' && (
-              <Circle
-                center={pos}
-                radius={asset.position_accuracy}
-                pathOptions={{ color: '#f59e0b', fillColor: '#f59e0b', fillOpacity: 0.15, weight: 1 }}
-                className="gps-uncertainty-ring"
-              />
-            )}
             {asset.gps_mode === 'denied' && (
               <Circle
                 center={pos}
                 radius={asset.position_accuracy}
-                pathOptions={{ color: '#ef4444', fillColor: '#ef4444', fillOpacity: 0.1, weight: 1 }}
-                className="gps-uncertainty-ring"
+                pathOptions={{ color: '#ef4444', fillColor: '#ef4444', fillOpacity: 0.08, weight: 1, dashArray: '4 3' }}
               />
             )}
             <Marker position={pos} icon={createIcon(asset.domain, asset.heading, asset.asset_id.toUpperCase())}>

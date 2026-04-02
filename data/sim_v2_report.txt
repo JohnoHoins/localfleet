@@ -1,0 +1,326 @@
+======================================================================
+  LOCALFLEET V2 SIMULATION ANALYSIS REPORT
+======================================================================
+
+  Total frames: 21401
+  Tests with data: 32
+
+  PASS/FAIL SUMMARY
+  ------------------------------------------------------------------
+  TEST                                     RESULT   KEY METRIC
+  ------------------------------------------------------------------
+  TEST-00-BASELINE                         PASS     All idle: True, 40 frames
+  TEST-01-PATROL                           WARN     0 loops, 100m spacing
+  TEST-02-SEARCH                           WARN     Stuck: 104s
+  TEST-03-ESCORT                           PASS     Closest: 18m
+  TEST-04-LOITER                           PASS     Orbit: YES
+  TEST-05-AERIAL-RECON                     PASS     No data
+  TEST-06-THREAT-ESCALATION                PASS     2 transitions
+  TEST-07-INTERCEPT-REPLAN                 PASS     2 replans, KC: ENGAGE, LOCK, TRACK
+  TEST-08-COMMS-CONTINUE                   PASS     WP transitions: 3
+  TEST-09-COMMS-HOLD                       WARN     Mean speed: 7.3
+  TEST-10-COMMS-RTB                        WARN     RTB action: NO
+  TEST-11-COMMS-AUTOENGAGE                 PASS     Auto-engage: YES
+  TEST-12-GPS-DEGRADED                     PASS     3 noise levels tested
+  TEST-13-GPS-DENIED-DRIFT                 PASS     DR data: 2130 samples
+  TEST-14-DOUBLE-DENIAL                    PASS     Actions: 1, DR: 1485 samples
+  TEST-15-FORMATION-ECHELON                PASS     AB=67m
+  TEST-15-FORMATION-LINE                   PASS     AB=53m
+  TEST-15-FORMATION-COLUMN                 PASS     AB=210m
+  TEST-15-FORMATION-SPREAD                 PASS     AB=180m
+  TEST-15-FORMATION-INDEPENDENT            PASS     AB=208m
+  TEST-16-SPEED-2MS                        PASS     Max: 4.4 m/s
+  TEST-16-SPEED-4MS                        PASS     Max: 4.7 m/s
+  TEST-16-SPEED-6MS                        PASS     Max: 5.7 m/s
+  TEST-16-SPEED-8MS                        PASS     Max: 7.5 m/s
+  TEST-16-SPEED-10MS                       PASS     Max: 9.3 m/s
+  TEST-17-MULTI-CONTACT                    PASS     3 contacts tracked
+  TEST-18-MAX-RANGE                        WARN     Max X: 2115m
+  TEST-19-RAPID-SWITCH                     PASS     3 missions, 0 jumps
+  TEST-20-ENDURANCE                        PASS     NaN: 0, 1183 frames
+  ------------------------------------------------------------------
+  PASS: 24  WARN: 5  FAIL: 0  SKIP: 0
+
+======================================================================
+  TEST-01-PATROL
+======================================================================
+
+Duration: 1079 frames (270s approx)
+  alpha: 3 waypoint transitions, 0 loops
+  bravo: 3 waypoint transitions, 0 loops
+  charlie: 3 waypoint transitions, 0 loops
+  FORMATION (echelon, target=200m):
+    alpha-bravo: mean=100.4m, max=198.8m, std=19.4m
+    bravo-charlie: mean=240.6m, max=396.6m, std=61.2m
+  DRONE ORBIT:
+    Radius: 150.0m (target: 150m, error: 0.0%)
+    Center: (1000, 167)
+    Fit error (RMS): 0.0m
+  Drone stuck periods: 0
+
+======================================================================
+  TEST-02-SEARCH
+======================================================================
+
+Duration: 1076 frames
+  LINE ABREAST spacing: mean=214.9m
+  Drone stuck periods: 1 (total 104s)
+    Stuck for 103.5s
+  Heading reversals (zigzag indicator): 0
+
+======================================================================
+  TEST-03-ESCORT
+======================================================================
+
+Duration: 695 frames
+  Closest approach: 18m
+
+======================================================================
+  TEST-04-LOITER
+======================================================================
+
+Duration: 936 frames
+  Orbit waypoints generated: YES
+  alpha orbit: radius=131.6m (target: 150m), center=(1001,506), RMS error=37.4m
+  bravo orbit: radius=131.4m (target: 150m), center=(892,784), RMS error=37.3m
+  charlie orbit: radius=131.3m (target: 150m), center=(782,1064), RMS error=39.3m
+  Drone orbit radius: 150.0m
+
+======================================================================
+  TEST-05-AERIAL-RECON
+======================================================================
+
+Duration: 956 frames
+  Drone altitude: mean=150m
+
+======================================================================
+  TEST-06-THREAT-ESCALATION
+======================================================================
+
+Duration: 958 frames
+  Threat transitions for bogey-far:
+    none -> none (dist=8685m)
+    none -> detected (dist=8000m)
+  Closest approach: 7121m
+  'detected' threat level observed: YES
+  Kill chain transitions: 2
+    none -> DETECT
+    DETECT -> None
+
+======================================================================
+  TEST-07-INTERCEPT-REPLAN
+======================================================================
+
+Duration: 1215 frames
+  Kill chain phases observed: ENGAGE, LOCK, TRACK
+    none -> TRACK
+    TRACK -> LOCK
+    LOCK -> ENGAGE
+    ENGAGE -> None
+  Replan events: 2
+  Target locked frames: 592
+
+======================================================================
+  TEST-08-COMMS-CONTINUE
+======================================================================
+
+Duration: 845 frames
+  Waypoint transitions during denial: 3
+  Autonomous actions: 0
+
+======================================================================
+  TEST-09-COMMS-HOLD
+======================================================================
+
+Duration: 731 frames
+  Speed during denial: mean=7.34, min=3.99, max=15.00
+  Frames near zero speed: 0/956
+
+======================================================================
+  TEST-10-COMMS-RTB
+======================================================================
+
+Duration: 1075 frames
+  Status during denial: {'executing': 1904}
+  Autonomous actions: []
+
+======================================================================
+  TEST-11-COMMS-AUTOENGAGE
+======================================================================
+
+Duration: 1016 frames
+  Autonomous actions: 60
+    AUTO-INTERCEPT: bogey-auto at (2454, 546) — comms denied 60s, threat critical, no operator
+    AUTO-RTB: idle_during_denial, standing orders = return_to_base
+    AUTO-INTERCEPT: bogey-auto at (2130, 870) — comms denied 99s, threat critical, no operator
+    AUTO-INTERCEPT: bogey-auto at (2125, 875) — comms denied 99s, threat critical, no operator
+    AUTO-INTERCEPT: bogey-auto at (2124, 876) — comms denied 99s, threat critical, no operator
+    AUTO-INTERCEPT: bogey-auto at (2123, 877) — comms denied 100s, threat critical, no operator
+    AUTO-INTERCEPT: bogey-auto at (2122, 878) — comms denied 100s, threat critical, no operator
+    AUTO-INTERCEPT: bogey-auto at (2121, 879) — comms denied 100s, threat critical, no operator
+    AUTO-INTERCEPT: bogey-auto at (2120, 880) — comms denied 100s, threat critical, no operator
+    AUTO-INTERCEPT: bogey-auto at (2119, 881) — comms denied 100s, threat critical, no operator
+    AUTO-INTERCEPT: bogey-auto at (2118, 882) — comms denied 100s, threat critical, no operator
+    AUTO-INTERCEPT: bogey-auto at (2117, 883) — comms denied 100s, threat critical, no operator
+    AUTO-INTERCEPT: bogey-auto at (2116, 884) — comms denied 100s, threat critical, no operator
+    AUTO-INTERCEPT: bogey-auto at (2115, 885) — comms denied 100s, threat critical, no operator
+    AUTO-INTERCEPT: bogey-auto at (2115, 885) — comms denied 101s, threat critical, no operator
+    AUTO-INTERCEPT: bogey-auto at (2114, 886) — comms denied 101s, threat critical, no operator
+    AUTO-INTERCEPT: bogey-auto at (2113, 887) — comms denied 101s, threat critical, no operator
+    AUTO-INTERCEPT: bogey-auto at (2112, 888) — comms denied 101s, threat critical, no operator
+    AUTO-INTERCEPT: bogey-auto at (2111, 889) — comms denied 101s, threat critical, no operator
+    AUTO-INTERCEPT: bogey-auto at (2110, 890) — comms denied 101s, threat critical, no operator
+    AUTO-INTERCEPT: bogey-auto at (2109, 891) — comms denied 101s, threat critical, no operator
+    AUTO-INTERCEPT: bogey-auto at (2108, 892) — comms denied 101s, threat critical, no operator
+    AUTO-INTERCEPT: bogey-auto at (2107, 893) — comms denied 101s, threat critical, no operator
+    AUTO-INTERCEPT: bogey-auto at (2106, 894) — comms denied 102s, threat critical, no operator
+    AUTO-INTERCEPT: bogey-auto at (2105, 895) — comms denied 102s, threat critical, no operator
+    AUTO-INTERCEPT: bogey-auto at (2104, 896) — comms denied 102s, threat critical, no operator
+    AUTO-INTERCEPT: bogey-auto at (2103, 897) — comms denied 102s, threat critical, no operator
+    AUTO-INTERCEPT: bogey-auto at (2102, 898) — comms denied 102s, threat critical, no operator
+    AUTO-INTERCEPT: bogey-auto at (2101, 899) — comms denied 102s, threat critical, no operator
+    AUTO-INTERCEPT: bogey-auto at (2100, 900) — comms denied 102s, threat critical, no operator
+    AUTO-INTERCEPT: bogey-auto at (2099, 901) — comms denied 102s, threat critical, no operator
+    AUTO-INTERCEPT: bogey-auto at (2098, 902) — comms denied 102s, threat critical, no operator
+    AUTO-INTERCEPT: bogey-auto at (2098, 902) — comms denied 103s, threat critical, no operator
+    AUTO-INTERCEPT: bogey-auto at (2097, 903) — comms denied 103s, threat critical, no operator
+    AUTO-INTERCEPT: bogey-auto at (2096, 904) — comms denied 103s, threat critical, no operator
+    AUTO-INTERCEPT: bogey-auto at (2095, 905) — comms denied 103s, threat critical, no operator
+    AUTO-INTERCEPT: bogey-auto at (2094, 906) — comms denied 103s, threat critical, no operator
+    AUTO-INTERCEPT: bogey-auto at (2093, 907) — comms denied 103s, threat critical, no operator
+    AUTO-INTERCEPT: bogey-auto at (2092, 908) — comms denied 103s, threat critical, no operator
+    AUTO-INTERCEPT: bogey-auto at (2091, 909) — comms denied 103s, threat critical, no operator
+    AUTO-INTERCEPT: bogey-auto at (2090, 910) — comms denied 103s, threat critical, no operator
+    AUTO-INTERCEPT: bogey-auto at (2089, 911) — comms denied 104s, threat critical, no operator
+    AUTO-INTERCEPT: bogey-auto at (2088, 912) — comms denied 104s, threat critical, no operator
+    AUTO-INTERCEPT: bogey-auto at (2087, 913) — comms denied 104s, threat critical, no operator
+    AUTO-INTERCEPT: bogey-auto at (2086, 914) — comms denied 104s, threat critical, no operator
+    AUTO-INTERCEPT: bogey-auto at (2085, 915) — comms denied 104s, threat critical, no operator
+    AUTO-INTERCEPT: bogey-auto at (2084, 916) — comms denied 104s, threat critical, no operator
+    AUTO-INTERCEPT: bogey-auto at (2083, 917) — comms denied 104s, threat critical, no operator
+    AUTO-INTERCEPT: bogey-auto at (2082, 918) — comms denied 104s, threat critical, no operator
+    AUTO-INTERCEPT: bogey-auto at (2081, 919) — comms denied 104s, threat critical, no operator
+    AUTO-INTERCEPT: bogey-auto at (2081, 919) — comms denied 105s, threat critical, no operator
+    AUTO-INTERCEPT: bogey-auto at (2080, 920) — comms denied 105s, threat critical, no operator
+    AUTO-INTERCEPT: bogey-auto at (2079, 921) — comms denied 105s, threat critical, no operator
+    AUTO-INTERCEPT: bogey-auto at (2078, 922) — comms denied 105s, threat critical, no operator
+    AUTO-INTERCEPT: bogey-auto at (2077, 923) — comms denied 105s, threat critical, no operator
+    AUTO-INTERCEPT: bogey-auto at (2076, 924) — comms denied 105s, threat critical, no operator
+    AUTO-INTERCEPT: bogey-auto at (2075, 925) — comms denied 105s, threat critical, no operator
+    AUTO-INTERCEPT: bogey-auto at (2074, 926) — comms denied 105s, threat critical, no operator
+    AUTO-INTERCEPT: bogey-auto at (2073, 927) — comms denied 105s, threat critical, no operator
+    AUTO-INTERCEPT: bogey-auto at (2072, 928) — comms denied 106s, threat critical, no operator
+
+======================================================================
+  TEST-12-GPS-DEGRADED
+======================================================================
+
+Duration: 937 frames
+  Noise=25m: mean_jitter=45.9m, max=145.7m, std=24.9m (717 samples)
+  Noise=50m: mean_jitter=88.7m, max=308.8m, std=45.4m (714 samples)
+  Noise=100m: mean_jitter=168.2m, max=539.0m, std=92.3m (714 samples)
+
+======================================================================
+  TEST-13-GPS-DENIED-DRIFT
+======================================================================
+
+Duration: 1238 frames
+  alpha: max drift=12.6m, cum_dist~839m, drift rate~1.50%
+    t=30s: accuracy=1.8m
+    t=60s: accuracy=3.9m
+    t=90s: accuracy=6.1m
+    t=120s: accuracy=8.3m
+    t=150s: accuracy=10.4m
+    t=180s: accuracy=12.6m
+  bravo: max drift=12.6m, cum_dist~842m, drift rate~1.50%
+    t=30s: accuracy=1.8m
+    t=60s: accuracy=4.0m
+    t=90s: accuracy=6.1m
+    t=120s: accuracy=8.4m
+    t=150s: accuracy=10.4m
+    t=180s: accuracy=12.6m
+  charlie: max drift=12.9m, cum_dist~861m, drift rate~1.50%
+    t=30s: accuracy=2.1m
+    t=60s: accuracy=4.3m
+    t=90s: accuracy=6.5m
+    t=120s: accuracy=8.6m
+    t=150s: accuracy=10.7m
+    t=180s: accuracy=12.9m
+  Position jumps (GPS restore snap): 2
+    alpha: 86.8m
+    bravo: 79.9m
+
+======================================================================
+  TEST-14-DOUBLE-DENIAL
+======================================================================
+
+Duration: 1055 frames
+  Autonomous actions: ['AUTO-INTERCEPT: bogey-stress at (3061, 1061) — comms denied 60s, threat critical, no operator']
+  Max DR drift: 11.0m
+
+======================================================================
+  TEST-15-FORMATION-COMPARISON
+======================================================================
+
+  ECHELON: AB mean=67m, BC mean=50m (target: 200m)
+  LINE: AB mean=53m, BC mean=190m (target: 200m)
+  COLUMN: AB mean=210m, BC mean=194m (target: 200m)
+  SPREAD: AB mean=180m, BC mean=172m (target: 300m)
+  INDEPENDENT: AB mean=208m, BC mean=195m
+
+======================================================================
+  TEST-16-SPEED-TESTS
+======================================================================
+
+  2 m/s: max=4.40, never reached target
+    Distance in 45s: 556m (theoretical: 90m)
+  4 m/s: max=4.65, time_to_speed=33.5s
+    Distance in 45s: 990m (theoretical: 180m)
+  6 m/s: max=5.67, time_to_speed=35.0s
+    Distance in 45s: 1384m (theoretical: 270m)
+  8 m/s: max=7.47, time_to_speed=38.6s
+    Distance in 45s: 1796m (theoretical: 360m)
+  10 m/s: max=9.27, time_to_speed=40.4s
+    Distance in 45s: 2215m (theoretical: 450m)
+
+======================================================================
+  TEST-17-MULTI-CONTACT
+======================================================================
+
+Duration: 358 frames
+  bogey-A: transitions=['detected'], closest=5970m
+  bogey-B: transitions=['warning'], closest=1935m
+  bogey-C: transitions=['critical'], closest=1051m
+  First drone target: bogey-C
+
+======================================================================
+  TEST-18-MAX-RANGE
+======================================================================
+
+Duration: 837 frames
+  Max X reached by alpha: 2115m (target: 4900m)
+
+======================================================================
+  TEST-19-RAPID-SWITCH
+======================================================================
+
+Duration: 463 frames
+  Missions observed: loiter, patrol, search
+  Position jumps during switching: 0
+  Error states: NO
+
+======================================================================
+  TEST-20-ENDURANCE
+======================================================================
+
+Duration: 1183 frames (~296s)
+  alpha: 2 transitions, 0 loops
+  bravo: 2 transitions, 0 loops
+  charlie: 2 transitions, 0 loops
+  Q1 spacing: mean=207m, std=4.5m
+  Q2 spacing: mean=194m, std=7.1m
+  Q3 spacing: mean=179m, std=24.5m
+  Q4 spacing: mean=179m, std=24.7m
+  Frame interval: mean=253.9ms, max=261.1ms
+  NaN values: 0
+  Drone orbit radius: 150.0m (stable: 0.0m RMS)

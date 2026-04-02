@@ -8,5 +8,10 @@ dist/
 .env
 corall-upstream/
 data/logs/*.db
+data/sim_capture.jsonl
+data/sim_v2_capture.jsonl
+data/sim_v2_snapshots.jsonl
+data/sim_snapshots.jsonl
+data/sim_mission_log.jsonl
 dashboard/build/
 dashboard/dist/

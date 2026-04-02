@@ -15,8 +15,8 @@ export default function AssetCard({ asset }) {
       <div className="flex items-center justify-between mb-1">
         <span className="font-bold text-sm tracking-wide">{asset.asset_id.toUpperCase()}</span>
         <div className="flex items-center gap-2">
-          {asset.gps_mode === 'degraded' && (
-            <span className="text-[10px] px-1 rounded bg-amber-900 text-amber-300">GPS-DENIED</span>
+          {asset.gps_mode === 'denied' && (
+            <span className="text-[10px] px-1 rounded bg-red-900 text-red-300">GPS-DENIED</span>
           )}
           <span
             className="text-[10px] font-bold px-1.5 py-0.5 rounded"

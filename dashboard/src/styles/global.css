@@ -12,14 +12,7 @@ body {
   filter: brightness(0.6) invert(1) contrast(3) hue-rotate(200deg) saturate(0.3) brightness(0.7);
 }
 
-@keyframes pulse-ring {
-  0% { opacity: 0.6; transform: scale(1); }
-  100% { opacity: 0; transform: scale(2.5); }
-}
-
-.gps-uncertainty-ring {
-  animation: pulse-ring 2s ease-out infinite;
-}
+/* GPS uncertainty rings — static, no animation */
 
 ::-webkit-scrollbar {
   width: 6px;

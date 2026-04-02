@@ -1,0 +1,254 @@
+======================================================================
+  LOCALFLEET SIMULATION ANALYSIS REPORT
+======================================================================
+  Total frames: 3468
+  Duration: 878.3s (14.6 min)
+  Effective frame rate: 3.9 Hz
+
+======================================================================
+  PER-ASSET METRICS
+======================================================================
+
+
+--- ALPHA ---
+
+  Total distance traveled: 21390.8 m
+  Max speed achieved:      7.97 m/s
+  Waypoint completions:    11
+  Max position error:      50.0 m
+  Frames recorded:         3468
+  Time by status:
+    executing         604.2s
+    idle              173.8s
+    returning          89.0s
+  Dead reckoning max drift: 4.1 m
+  DR drift samples (sec, meters):
+    t=   0.0s  drift=   0.0m
+    t=  10.2s  drift=   1.1m
+    t=  20.3s  drift=   2.3m
+    t=  30.4s  drift=   3.2m
+    t=  40.5s  drift=   3.7m
+    t=  50.7s  drift=   4.0m
+
+--- BRAVO ---
+
+  Total distance traveled: 21627.1 m
+  Max speed achieved:      7.96 m/s
+  Waypoint completions:    9
+  Max position error:      50.0 m
+  Frames recorded:         3468
+  Time by status:
+    executing         646.2s
+    idle              131.8s
+    returning          89.0s
+  Dead reckoning max drift: 5.2 m
+  DR drift samples (sec, meters):
+    t=   0.0s  drift=   0.0m
+    t=  10.2s  drift=   1.2m
+    t=  20.3s  drift=   2.1m
+    t=  30.4s  drift=   2.8m
+    t=  40.5s  drift=   3.4m
+    t=  50.7s  drift=   4.3m
+
+--- CHARLIE ---
+
+  Total distance traveled: 21735.4 m
+  Max speed achieved:      7.95 m/s
+  Waypoint completions:    9
+  Max position error:      50.0 m
+  Frames recorded:         3468
+  Time by status:
+    executing         594.2s
+    idle              183.8s
+    returning          89.0s
+  Dead reckoning max drift: 4.4 m
+  DR drift samples (sec, meters):
+    t=   0.0s  drift=   0.0m
+    t=  10.2s  drift=   1.1m
+    t=  20.3s  drift=   2.3m
+    t=  30.4s  drift=   3.3m
+    t=  40.5s  drift=   3.9m
+    t=  50.7s  drift=   4.3m
+
+--- EAGLE-1 ---
+
+  Total distance traveled: 31782.3 m
+  Max speed achieved:      15.00 m/s
+  Waypoint completions:    461
+  Max position error:      50.0 m
+  Frames recorded:         3468
+  Time by status:
+    executing         500.8s
+    idle              320.8s
+    returning          45.5s
+
+======================================================================
+  PER-CONTACT METRICS
+======================================================================
+
+
+--- bogey-1 ---
+
+  Time alive:              129.3s
+  Distance traveled:       1147.5 m
+  Closest vessel approach: 272.1 m
+  Time to drone track:     8.4s
+  Time at each threat level:
+    critical           54.0s
+    warning            73.8s
+
+--- bogey-2 ---
+
+  Time alive:              152.1s
+  Distance traveled:       1800.0 m
+  Closest vessel approach: 0.8 m
+  Time to drone track:     0.3s
+  Time at each threat level:
+    critical          113.8s
+    warning            36.2s
+
+--- escort-target ---
+
+  Time alive:              60.9s
+  Distance traveled:       360.0 m
+  Closest vessel approach: 973.2 m
+  Time to drone track:     0.0s
+  Time at each threat level:
+    critical           59.0s
+    warning             1.2s
+
+======================================================================
+  FLEET-LEVEL METRICS
+======================================================================
+
+
+--- Mission Types Exercised ---
+
+  - aerial_recon
+  - escort
+  - intercept
+  - loiter
+  - patrol
+  - search
+
+--- Formation Types Exercised ---
+
+  - column
+  - echelon
+  - independent
+  - line
+  - spread
+
+--- Decision Log ---
+
+  Total decisions:  200
+    auto_track                  100
+    kill_chain_transition         1
+    threat_assessment            99
+
+--- Intercept Replanning ---
+
+  Replan events: 0
+
+--- Autonomous Actions ---
+
+  [1775083481.6] AUTO-INTERCEPT: bogey-2 at (3000, -264) — comms denied 60s, threat critical, no operator
+  [1775083535.3] AUTO-RTB: idle_during_denial, standing orders = return_to_base
+  [1775083535.3] AUTO-INTERCEPT: bogey-2 at (3000, 372) — comms denied 114s, threat critical, no operator
+  [1775083571.8] COMMS RESTORED after 150s
+
+======================================================================
+  ANOMALIES & EDGE CASES
+======================================================================
+
+  WARNING: Frame 1249: eagle-1 appears stuck (executing but stationary for 5s)
+  WARNING: Frame 1269: eagle-1 appears stuck (executing but stationary for 5s)
+  WARNING: Frame 1289: eagle-1 appears stuck (executing but stationary for 5s)
+  WARNING: Frame 1309: eagle-1 appears stuck (executing but stationary for 5s)
+  WARNING: Frame 1329: eagle-1 appears stuck (executing but stationary for 5s)
+  WARNING: Frame 1349: eagle-1 appears stuck (executing but stationary for 5s)
+  WARNING: Frame 1369: eagle-1 appears stuck (executing but stationary for 5s)
+  WARNING: Frame 1389: eagle-1 appears stuck (executing but stationary for 5s)
+  WARNING: Frame 1409: eagle-1 appears stuck (executing but stationary for 5s)
+  WARNING: Frame 1429: eagle-1 appears stuck (executing but stationary for 5s)
+  WARNING: Frame 1449: eagle-1 appears stuck (executing but stationary for 5s)
+  WARNING: Frame 1469: eagle-1 appears stuck (executing but stationary for 5s)
+  WARNING: Frame 1489: eagle-1 appears stuck (executing but stationary for 5s)
+  WARNING: Frame 1509: eagle-1 appears stuck (executing but stationary for 5s)
+  WARNING: Frame 1529: eagle-1 appears stuck (executing but stationary for 5s)
+  WARNING: Frame 1549: eagle-1 appears stuck (executing but stationary for 5s)
+  WARNING: Frame 2157: alpha position jump of 321.6m
+  WARNING: Frame 2157: bravo position jump of 318.8m
+  WARNING: Frame 2157: charlie position jump of 312.5m
+  WARNING: Frame 2993: alpha position jump of 52.2m
+  WARNING: Frame 2993: bravo position jump of 92.5m
+  WARNING: Frame 2994: bravo position jump of 123.3m
+  WARNING: Frame 2994: charlie position jump of 141.8m
+  WARNING: Frame 2995: alpha position jump of 57.1m
+  WARNING: Frame 2995: bravo position jump of 52.4m
+  WARNING: Frame 2995: charlie position jump of 177.5m
+  WARNING: Frame 2996: alpha position jump of 104.8m
+  WARNING: Frame 2996: bravo position jump of 144.7m
+  WARNING: Frame 2996: charlie position jump of 58.1m
+  WARNING: Frame 2997: alpha position jump of 59.0m
+  WARNING: Frame 2997: charlie position jump of 136.0m
+  WARNING: Frame 2998: alpha position jump of 78.3m
+  WARNING: Frame 2998: bravo position jump of 159.6m
+  WARNING: Frame 2998: charlie position jump of 68.3m
+  WARNING: Frame 2999: alpha position jump of 77.4m
+  WARNING: Frame 2999: bravo position jump of 114.1m
+  WARNING: Frame 3000: alpha position jump of 189.0m
+  WARNING: Frame 3000: bravo position jump of 84.8m
+  WARNING: Frame 3000: charlie position jump of 127.9m
+  WARNING: Frame 3001: alpha position jump of 250.2m
+  WARNING: Frame 3001: bravo position jump of 79.3m
+  WARNING: Frame 3001: charlie position jump of 105.3m
+  WARNING: Frame 3002: alpha position jump of 214.0m
+  WARNING: Frame 3002: bravo position jump of 124.8m
+  WARNING: Frame 3002: charlie position jump of 87.3m
+  WARNING: Frame 3003: alpha position jump of 110.9m
+  WARNING: Frame 3003: bravo position jump of 102.7m
+  WARNING: Frame 3003: charlie position jump of 56.6m
+  WARNING: Frame 3004: alpha position jump of 106.8m
+  WARNING: Frame 3004: bravo position jump of 69.9m
+  ... and 261 more
+
+======================================================================
+  ANALYSIS CHECKLIST
+======================================================================
+
+
+--- 1. Navigation Accuracy ---
+
+  alpha: 11 waypoint transitions, 21391m traveled
+  bravo: 9 waypoint transitions, 21627m traveled
+  charlie: 9 waypoint transitions, 21735m traveled
+  eagle-1: 461 waypoint transitions, 31782m traveled
+
+--- 2. Mission Behavior Correctness ---
+
+  Missions exercised: aerial_recon, escort, intercept, loiter, patrol, search
+  All 6 mission types exercised.
+
+--- 3. Threat Response Timing ---
+
+  bogey-1:
+    Drone track response: 8.4s after spawn
+  bogey-2:
+    Drone track response: 0.3s after spawn
+  escort-target:
+    Drone track response: 0.0s after spawn
+
+--- 4. Kill Chain Integrity ---
+
+  Kill chain phases observed: CONVERGE, DETECT, ENGAGE, LOCK, TRACK
+
+--- 7. GPS Denied Drift ---
+
+  alpha: max drift=4.1m over 60s (~4.1 m/min)
+  bravo: max drift=5.2m over 60s (~5.2 m/min)
+  charlie: max drift=4.4m over 60s (~4.4 m/min)
+
+--- 10. Edge Cases & Bugs ---
+
+  Total anomalies detected: 311

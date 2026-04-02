@@ -38,12 +38,94 @@ Key files by subsystem:
 | 5 | Audit 4: Mission Lifecycle | DONE | `098222b` | 5 intercept tests |
 | 6 | Audit 3: GPS Denied | DONE | `c2caeed` | 6 dead reckoning tests |
 | 7 | Audit 5: Dashboard C2 Ops | DONE | `dd49d20` | pnpm build clean |
-| 8 | **Audit 8: Predictive Intercept** | **NEXT** | — | — |
-| 9 | **Audit 9: Autonomous Threat Response** | PENDING | — | — |
-| 10 | **Audit 10: Comms-Denied Autonomy** | PENDING | — | — |
-| 11 | **Audit 11: Cross-Domain Kill Chain** | PENDING | — | — |
-| 12 | **Audit 12: Decision Audit Trail** | PENDING | — | — |
-| 13 | **Audit 13: Mission-Specific Behaviors** | PENDING | — | — |
+| 8 | Audit 8: Predictive Intercept | DONE | `6778446` | 5 intercept prediction tests |
+| 9 | Audit 9: Autonomous Threat Response | DONE | `2502bab` | 10 threat detector tests |
+| 10 | Audit 10: Comms-Denied Autonomy | DONE | `41808ce` | Comms-denied behavior tests |
+| 11 | Audit 11: Cross-Domain Kill Chain | DONE | `412d7b6` | Kill chain phase tests |
+| 12 | Audit 12: Decision Audit Trail | DONE | `16fb530` | Decision logging tests |
+| 13 | Audit 13: Mission-Specific Behaviors | DONE | `2100d59` | Mission behavior tests |
+| — | **V1 Simulation** | DONE | — | 3468 frames, 311 anomalies |
+| — | **V2 Simulation (21 tests)** | DONE | — | 21401 frames, 24 PASS / 5 WARN / 0 FAIL |
+
+---
+
+## CRITICAL BLOCKERS & DEPENDENCIES
+
+**READ THIS BEFORE STARTING ANY AUDIT.**
+
+### BLOCKER 1: Audit 9 Work is Uncommitted
+`src/fleet/threat_detector.py` and `tests/test_threat_detector.py` are **untracked**.
+Changes to `fleet_manager.py`, `App.jsx`, `ContactPanel.jsx`, `FleetMap.jsx`,
+`MissionLog.jsx`, `MissionStatus.jsx`, and `ws.py` are **unstaged**.
+**Action**: Commit all Audit 9 work before starting Audit 10. Run full test suite first.
+
+### BLOCKER 2: fleet_manager.py God-Class Risk
+`step()` already handles 10 responsibilities (physics, GPS-DR, nav, land avoidance,
+speed scaling, contacts, intercept replan, threat check, drone step, waypoint completion).
+Audits 10-13 each add more. By Audit 13, step() will be unmanageable.
+**Action**: Each audit MUST extract new behavior into private methods (`_handle_comms_denied()`,
+`_advance_kill_chain()`, `_mission_specific_step()`). step() itself stays as a dispatcher.
+
+### BLOCKER 3: get_fleet_state_dict() Injection Scaling
+Currently injects: threat_assessments, intercept_recommended, recommended_target.
+Audits 10-13 need: comms_mode, comms_denied_duration, kill_chain_phase, targeting_data,
+recent_decisions. All injected into the same dict.
+**Action**: Structure injections into namespaced sub-dicts:
+```python
+data["autonomy"] = {
+    "comms_mode": ..., "comms_denied_duration": ...,
+    "kill_chain_phase": ..., "targeting_data": ...,
+}
+data["decisions"] = [...]  # recent decision log entries
+```
+
+### BLOCKER 4: Audit 11 Duplicates Audit 9 Threat Logic
+Kill chain phases (DETECT/TRACK/LOCK/ENGAGE/CONVERGE) map directly to
+threat_detector levels (detected/warning/critical). Building a parallel system
+creates divergence.
+**Action**: Kill chain phases are DRIVEN BY threat_detector output + drone sensor data.
+- `threat_level == "detected"` → kill chain DETECT
+- `threat_level == "warning"` + drone auto-tracked → kill chain TRACK
+- Drone within sensor range (3km) of contact → kill chain LOCK
+- Operator approves (or comms-denied auto-escalation) → kill chain ENGAGE
+- Fleet within 500m of contact → kill chain CONVERGE
+
+### BLOCKER 5: ESCORT Mission Needs a Designatable Contact
+Audit 13's ESCORT follows a contact. But all contacts are "threats." No friend/foe.
+**Action**: Do NOT modify schemas. Use mission semantics: when mission_type == ESCORT,
+the target contact is the one to escort (operator picks it). The contact_id can be
+passed via the intercept waypoint convention or a new `escort_target` field in
+the dispatch logic. The simplest approach: ESCORT treats the closest contact as the
+escort target, same way INTERCEPT picks the closest contact to intercept.
+
+### BLOCKER 6: decision_making.py is Dead Code
+`src/decision_making/decision_making.py` contains a COLREG classifier that is never
+called by any module. It was bypassed by threat_detector.py and reactive_avoidance.py.
+**Action**: Leave it alone. Don't integrate, don't delete. It's harmless dead code.
+Future audits do not depend on it.
+
+### BLOCKER 7: DroneCoordinator TRACK Pattern is Single-Point
+`generate_track_waypoints()` produces ONE point behind the target. For Audit 11's
+continuous sensor lock, the drone needs sustained tracking (orbit within sensor range).
+**Action**: Audit 11 must update TRACK to generate an orbit around the contact
+(reusing `generate_orbit_waypoints()` centered on contact position), refreshed each
+threat check cycle. This keeps the drone within sensor FOV.
+
+### BLOCKER 8: Comms-Denied Needs Last Command Reference
+When comms are denied, the fleet needs to reference its last orders. The last
+FleetCommand is stored on `fleet_commander.last_command`, not on `fleet_manager`.
+**Action**: Audit 10 must store `self.last_command` on fleet_manager when
+dispatch_command() is called.
+
+### Dependency Chain
+```
+Audit 9 (commit first!) → Audit 10 (comms-denied uses intercept_recommended)
+                         → Audit 11 (kill chain uses threat_detector + drone sensor)
+                         → Audit 12 (instruments ALL decisions from 9-11)
+                         → Audit 13 (mission behaviors are independent, could run earlier)
+```
+Audit 13 has NO dependency on 10-12. It could be executed right after 9.
+Consider running 13 before 10 if you want quick visual wins for the demo.
 
 ---
 
@@ -437,19 +519,22 @@ DEMO STORY:
 
 ---
 
-## AUDIT 10: Comms-Denied Autonomous Behavior
-**Goal**: When communications are denied, the fleet continues operating on pre-briefed behaviors instead of going dead. The `comms_lost_behavior` field already exists in FleetCommand but is never triggered.
+## AUDIT 10: Comms-Denied Autonomous Behavior — Fleet Keeps Fighting
+**Goal**: When the C2 link goes down, the fleet doesn't go dead — it escalates through an autonomous behavior ladder. This is the money shot for the Havoc demo: "I jam comms, and the fleet keeps operating." Combined with GPS-denied, this shows dual-failure resilience.
 
 ```
 Execute Audit 10 — Comms-Denied Autonomy for the LocalFleet project.
 
 Read CLAUDE.md first. Then read docs/localfleet_audit_plan.md — focus on AUDIT 10.
+READ THE BLOCKERS SECTION — especially Blocker 1 (commit Audit 9 first),
+Blocker 3 (state dict injection pattern), and Blocker 8 (last command ref).
 
 COMPLETED AUDITS: Audits 1-9 complete. Predictive intercept + auto threat
-response working. 147+ tests passing. Do NOT break them.
+response working. Tests passing. Do NOT break them.
 
-YOUR TASK: Add a COMMS DENIED mode where the operator loses the ability to
-send commands, but the fleet continues operating autonomously on last orders.
+YOUR TASK: Add a COMMS DENIED mode where the operator can't send commands
+but the fleet continues operating autonomously — and escalates through a
+behavior ladder when threats appear with no human to approve.
 
 ────────────────────────────────────────────────────────────────────
 THE PROBLEM
@@ -460,115 +545,225 @@ environments, the MORE likely failure is COMMUNICATIONS denial — the
 operator can't reach the fleet at all. Jamming, distance, terrain.
 
 The FleetCommand schema already has: comms_lost_behavior = "return_to_base"
-This field is stored but NEVER READ or ACTED ON by any code.
+This field is stored in fleet_manager.comms_lost_behavior but NEVER READ
+or ACTED ON by any code path.
 
-Currently if you "deny comms" there's no mechanism for it — the WebSocket
-just keeps streaming. There's no simulation of command link loss.
+Currently if you "deny comms" there's no mechanism — the WebSocket just
+keeps streaming, commands still work. There's no simulation of C2 link loss.
 
-For a defense demo, this is the money shot: "I jam comms, and the fleet
-keeps operating." It shows the system doesn't need a human in the loop
-for every decision.
+A defense CEO's first question after seeing the autonomous threat response:
+"What happens if I jam the C2 link?" The answer MUST NOT be "it stops."
+
+THE REAL PROBLEM IS DEEPER: When comms are denied AND a contact reaches
+critical range, the intercept_recommended flag (from Audit 9) fires — but
+there's no operator to click the button. The fleet needs an autonomous
+escalation path that doesn't exist yet.
 
 ────────────────────────────────────────────────────────────────────
 WHAT TO BUILD
 ────────────────────────────────────────────────────────────────────
 
-A) COMMS MODE STATE (add to fleet_manager.py)
+A) COMMS MODE STATE (add to fleet_manager.py __init__)
 
-   Add a comms_mode attribute: "full" or "denied"
-   Add a comms_denied_since timestamp (or None)
-   Add a comms_denied_timeout: float = 300.0 (5 minutes default)
+   self.comms_mode: str = "full"              # "full" or "denied"
+   self.comms_denied_since: float | None = None  # time.time() when denied
+   self.last_command: FleetCommand | None = None  # CRITICAL: store on dispatch
+   self.autonomous_actions: list[str] = []    # log of what fleet did on its own
+
+   In dispatch_command(), FIRST LINE: self.last_command = cmd
+   This is needed so the fleet can reference its last orders during denial.
+
+   Methods:
+   def set_comms_mode(self, mode: str):
+       if mode == "denied" and self.comms_mode != "denied":
+           self.comms_denied_since = time.time()
+           self.autonomous_actions = []
+           # If IDLE, immediately execute comms_lost_behavior
+           if not self._has_active_mission():
+               self._execute_comms_fallback("idle_on_denial")
+       elif mode == "full" and self.comms_mode == "full":
+           return  # no-op
+       elif mode == "full":
+           duration = time.time() - (self.comms_denied_since or time.time())
+           self.autonomous_actions.append(
+               f"COMMS RESTORED after {duration:.0f}s"
+           )
+           self.comms_denied_since = None
+       self.comms_mode = mode
+
+   def _has_active_mission(self) -> bool:
+       return any(v["status"] in (AssetStatus.EXECUTING, AssetStatus.RETURNING)
+                  for v in self.vessels.values())
 
    When comms_mode == "denied":
-   - POST /api/command and POST /api/command-direct should return
-     {"success": false, "error": "COMMS DENIED — fleet operating autonomously"}
-   - POST /api/return-to-base should also be blocked
-   - The fleet continues executing whatever it was doing
-   - Contact spawn/remove should still work (that's a sim control, not C2)
-   - GPS mode changes should still work (that's environmental, not C2)
+   - POST /api/command and /api/command-direct → return 503 with
+     {"success": false, "error": "COMMS DENIED — fleet operating autonomously",
+      "comms_denied_since": <timestamp>, "autonomous_actions": [...]}
+   - POST /api/return-to-base → also blocked
+   - Contact spawn/remove STILL WORKS (sim control, not C2)
+   - GPS mode changes STILL WORK (environmental, not C2)
 
-B) AUTONOMOUS BEHAVIORS WHEN COMMS DENIED (modify step() in fleet_manager.py)
+B) AUTONOMOUS ESCALATION LADDER (modify step() via new method _handle_comms_denied)
 
-   When comms_mode == "denied", the fleet executes pre-briefed logic:
+   In step(), after threat checking, if comms_mode == "denied":
+       self._handle_comms_denied(dt)
 
-   1. IF fleet has an active mission → CONTINUE executing it
-      - Intercept: keep navigating to intercept point (with replanning)
-      - Patrol: keep following waypoints
-      - Any mission: continue as normal
+   def _handle_comms_denied(self, dt: float):
+       """Autonomous behavior when C2 link is down."""
+       if self.comms_mode != "denied":
+           return
+       elapsed = time.time() - (self.comms_denied_since or time.time())
 
-   2. IF fleet is IDLE when comms are denied → execute comms_lost_behavior
-      - "return_to_base" (default): call self.return_to_base()
-      - "hold_position": set all vessels to LOITER at current position
-      - "continue_mission": do nothing, wait for comms restore
+       # LEVEL 1: Continue current mission (always)
+       # The fleet keeps doing whatever it was doing — intercept replanning,
+       # patrol, etc. This requires NO new code — it's the default.
 
-   3. IF comms denied for longer than comms_denied_timeout (300s) AND
-      fleet is still executing a mission → switch to comms_lost_behavior
-      - This simulates "mission complete but can't report back, fall back
-        to standing orders"
-      - When vessels reach IDLE after mission waypoints exhausted, trigger
-        comms_lost_behavior
+       # LEVEL 2: Idle fleet executes standing orders
+       if not self._has_active_mission():
+           self._execute_comms_fallback("idle_during_denial")
 
-   4. THREAT RESPONSE still operates autonomously (from Audit 9)
-      - Drone auto-tracks on warning range
-      - But intercept_recommended flag has no one to click it
-      - Add: if comms_denied AND intercept_recommended AND
-        comms_denied_timeout has elapsed → auto-dispatch intercept
-        (this is the "fully autonomous" escalation)
+       # LEVEL 3: Autonomous threat engagement after timeout
+       # This is the critical escalation: with no operator to click
+       # "INTERCEPT", the fleet decides on its own after waiting.
+       AUTONOMOUS_ESCALATION_DELAY = 60.0  # seconds before auto-engage
+       if (self.intercept_recommended
+               and elapsed > AUTONOMOUS_ESCALATION_DELAY
+               and self.active_mission != MissionType.INTERCEPT):
+           self._auto_engage_threat()
+
+   def _execute_comms_fallback(self, trigger: str):
+       """Execute comms_lost_behavior standing orders."""
+       behavior = self.comms_lost_behavior  # from last FleetCommand
+       if behavior == "return_to_base":
+           self.return_to_base()
+           self.autonomous_actions.append(
+               f"AUTO-RTB: {trigger}, standing orders = return_to_base"
+           )
+       elif behavior == "hold_position":
+           # Stop all vessels in place
+           for vid, v in self.vessels.items():
+               if v["status"] == AssetStatus.IDLE:
+                   continue
+               v["status"] = AssetStatus.IDLE
+               v["desired_speed"] = 0.0
+           self.autonomous_actions.append(
+               f"AUTO-HOLD: {trigger}, standing orders = hold_position"
+           )
+       # "continue_mission" = do nothing, wait for comms restore
+
+   def _auto_engage_threat(self):
+       """Fully autonomous intercept — no human in the loop."""
+       target_id = self.recommended_target
+       if not target_id or target_id not in self.contacts:
+           return
+       contact = self.contacts[target_id]
+
+       # Build a minimal intercept command using the fleet's own state
+       from src.schemas import AssetCommand, FleetCommand, Waypoint
+       surface_cmds = []
+       for vid in self.vessels:
+           surface_cmds.append(AssetCommand(
+               asset_id=vid, domain=DomainType.SURFACE,
+               waypoints=[Waypoint(x=contact.x, y=contact.y)],
+               speed=8.0,
+           ))
+       # Drone stays on TRACK (already auto-tasked by Audit 9)
+       cmd = FleetCommand(
+           mission_type=MissionType.INTERCEPT,
+           assets=surface_cmds,
+           formation=self.formation,
+       )
+       self.dispatch_command(cmd)
+       self.autonomous_actions.append(
+           f"AUTO-INTERCEPT: {target_id} at ({contact.x:.0f}, {contact.y:.0f}) "
+           f"— comms denied {time.time() - (self.comms_denied_since or 0):.0f}s, "
+           f"threat at critical range, no operator response"
+       )
 
 C) API ENDPOINT (add to routes.py)
 
    POST /api/comms-mode
    Body: { "mode": "full" | "denied" }
-   Response: { "comms_mode": "full"|"denied" }
 
-   When switching to denied:
-   - Record timestamp
-   - Block command endpoints
-   - Fleet continues on autopilot
+   class CommsModeRequest(BaseModel):
+       mode: str  # "full" or "denied"
 
-   When switching back to full:
-   - Log "COMMS RESTORED — X seconds denied"
-   - Resume normal command acceptance
+   Response: {
+       "comms_mode": "full"|"denied",
+       "autonomous_actions": [...],
+       "denied_duration": 0.0
+   }
 
-D) COMMS STATE IN FLEET STATE (modify get_fleet_state())
+   ALSO: Gate existing command endpoints behind comms check:
+   In post_command() and post_command_direct():
+     fm = request.app.state.commander.fleet_manager
+     if fm.comms_mode == "denied":
+         return {"success": False,
+                 "error": "COMMS DENIED — fleet operating autonomously"}
+   Same for post_return_to_base().
 
-   Include in WebSocket stream:
-   - comms_mode: "full" | "denied"
-   - comms_denied_duration: float (seconds since denial, or 0)
-   - autonomous_action: str | null (what the fleet is doing on its own)
+D) COMMS STATE IN FLEET STATE (modify get_fleet_state_dict())
+
+   Structure under data["autonomy"] namespace:
+   data["autonomy"] = {
+       "comms_mode": self.comms_mode,
+       "comms_denied_duration": elapsed_seconds or 0.0,
+       "comms_lost_behavior": self.comms_lost_behavior,
+       "autonomous_actions": self.autonomous_actions[-10:],  # last 10
+       "autonomous_escalation": "engaged" if auto-intercepting else
+                                "monitoring" if comms_denied else None,
+   }
 
 E) DASHBOARD — COMMS DENIED OVERLAY
 
-   1. New toggle: CommsDeniedToggle.jsx (or extend GpsDeniedToggle)
-      - Button to toggle comms mode
-      - POST /api/comms-mode on click
-      - Colors: FULL=green, DENIED=red
+   1. CommsDeniedToggle (add to existing GpsDeniedToggle or new component):
+      - Button to toggle comms mode: POST /api/comms-mode
+      - Colors: FULL=green, DENIED=pulsing red
+      - Show alongside GPS toggle (both can be active simultaneously)
 
    2. When comms denied:
-      - Header bar turns red/amber with "COMMS DENIED" flashing
-      - CommandPanel input is disabled with overlay: "COMMS DENIED"
-      - RTB button is disabled with same overlay
-      - MissionStatus shows: "AUTONOMOUS — [executing last orders]"
-      - Timer showing duration of comms denial
+      - Red banner across top: "⛔ COMMS DENIED — AUTONOMOUS MODE"
+      - Running timer: "02:34 denied"
+      - CommandPanel input DISABLED with red overlay
+      - RTB button DISABLED
+      - MissionStatus shows: "AUTONOMOUS — executing last orders"
+      - If autonomous_actions not empty, show them in MissionLog
 
-   3. When comms restored:
-      - Brief green flash "COMMS RESTORED"
+   3. DUAL FAILURE state (GPS-denied + comms-denied):
+      - Both indicators active (red comms + amber GPS)
+      - MissionStatus: "DEGRADED — GPS DENIED + COMMS DENIED"
+      - This is the ultimate resilience demo
+
+   4. When comms restored:
+      - Brief green flash "COMMS RESTORED after Xs"
       - All controls re-enabled
-      - MissionLog entry: "COMMS RESTORED after Xs"
+      - MissionLog shows summary of autonomous actions taken
+
+────────────────────────────────────────────────────────────────────
+COORDINATE WITH EXISTING CODE
+────────────────────────────────────────────────────────────────────
+
+- fleet_manager.py __init__ (line ~99): comms_lost_behavior is already stored
+- fleet_manager.py _check_threats() (line ~349): already sets intercept_recommended
+- fleet_manager.py step() (line ~260): add _handle_comms_denied() call AFTER
+  the threat check block (line ~341)
+- routes.py: add comms-mode endpoint and gate existing endpoints
+- ws.py: already uses get_fleet_state_dict() — no changes needed if dict is updated
 
 ────────────────────────────────────────────────────────────────────
 WHAT NOT TO DO
 ────────────────────────────────────────────────────────────────────
 
-- Do NOT actually disconnect the WebSocket — the operator can still
-  OBSERVE the fleet (imagine a separate sensor feed), they just can't
-  COMMAND it. The C2 link is denied, not the surveillance link.
+- Do NOT disconnect the WebSocket — operator can OBSERVE but not COMMAND
+  (surveillance link vs C2 link are separate)
 - Do NOT modify schemas.py
-- Do NOT make comms denial affect GPS mode — they are independent failures
-- Do NOT make autonomous intercept happen instantly — there should be a
-  delay (the timeout) before fully autonomous escalation
-- Do NOT change existing command dispatch logic — just gate it behind
-  comms_mode check
+- Do NOT make comms denial affect GPS mode — they are INDEPENDENT failures
+- Do NOT auto-engage instantly — the 60s delay is critical for realism
+  and gives the operator time to restore comms before full autonomy kicks in
+- Do NOT change dispatch_command() internals — just gate the API endpoints
+  and add the autonomous escalation path
+- Do NOT call _auto_engage_threat() every step — only when intercept_recommended
+  transitions to True AND delay has elapsed. Use a flag to prevent re-triggering.
 
 ────────────────────────────────────────────────────────────────────
 TEST PLAN
@@ -576,31 +771,50 @@ TEST PLAN
 
 New file: tests/test_comms_denied.py
 
-1. test_comms_denied_blocks_commands:
-   Set comms denied → attempt command dispatch → verify blocked with error
+1. test_comms_denied_blocks_dispatch:
+   Set comms denied → call fleet_manager.dispatch_command() via route
+   → verify 503/error response
 
 2. test_comms_denied_fleet_continues_mission:
    Start patrol → set comms denied → run 100 steps → verify fleet still
-   EXECUTING (not stopped)
+   EXECUTING and vessels have moved from initial positions
 
 3. test_comms_denied_idle_triggers_rtb:
-   Fleet idle → set comms denied → run 10 steps → verify fleet RETURNING
+   Fleet idle → set comms denied → verify fleet status changes to RETURNING
+   within 10 steps
 
-4. test_comms_denied_timeout_triggers_fallback:
-   Fleet executing → set comms denied → run enough steps to exceed timeout
-   → verify comms_lost_behavior triggered
+4. test_comms_denied_idle_hold_position:
+   Set comms_lost_behavior = "hold_position" → fleet idle → comms denied
+   → verify fleet stays IDLE (does not move)
 
-5. test_comms_restored_accepts_commands:
-   Set comms denied → restore → attempt command → verify accepted
+5. test_comms_denied_auto_engage_after_delay:
+   Fleet idle → spawn contact at 1500m (critical range) → set comms denied
+   → fast-forward past AUTONOMOUS_ESCALATION_DELAY → verify fleet
+   dispatched to INTERCEPT autonomously
 
-6. test_comms_denied_contacts_still_work:
-   Set comms denied → spawn contact → verify contact appears
+6. test_comms_denied_no_auto_engage_before_delay:
+   Same setup as above but run fewer steps → verify fleet has NOT
+   auto-engaged (still waiting for delay)
 
-7. test_comms_denied_in_fleet_state:
-   Set comms denied → get_fleet_state() includes comms_mode and duration
+7. test_comms_restored_accepts_commands:
+   Set comms denied → restore → dispatch command → verify accepted
 
-8. test_comms_denied_duration_tracks:
-   Set comms denied → run 40 steps (10s) → verify duration ~10s
+8. test_comms_denied_contacts_still_work:
+   Set comms denied → spawn contact → verify contact appears in fleet state
+
+9. test_comms_denied_duration_tracks:
+   Set comms denied → wait → verify comms_denied_duration in fleet state
+
+10. test_dual_failure_gps_and_comms:
+    Set GPS denied + comms denied → run 100 steps → verify fleet still
+    operates (DR navigation + autonomous behavior both active)
+
+11. test_comms_denied_autonomous_actions_logged:
+    Trigger auto-RTB → verify autonomous_actions list is non-empty and
+    contains the action description
+
+12. test_comms_denied_stores_last_command:
+    Dispatch command → verify fleet_manager.last_command is set
 
 Run: .venv/bin/python -m pytest tests/ -v
 
@@ -608,150 +822,341 @@ Run: .venv/bin/python -m pytest tests/ -v
 DELIVERABLES
 ────────────────────────────────────────────────────────────────────
 
-1. fleet_manager.py — comms_mode state, command gating, autonomous behaviors
-2. routes.py — POST /api/comms-mode endpoint
-3. fleet_manager.py — comms state in get_fleet_state()
-4. Dashboard — comms toggle, disabled controls overlay, status indicator
-5. 8 new tests
+1. fleet_manager.py — comms_mode state, set_comms_mode(), _handle_comms_denied(),
+   _execute_comms_fallback(), _auto_engage_threat(), last_command storage
+2. routes.py — POST /api/comms-mode endpoint + gate existing command endpoints
+3. fleet_manager.py — comms state in get_fleet_state_dict() under "autonomy" key
+4. Dashboard — comms toggle, disabled controls overlay, dual-failure display
+5. 12 new tests
 6. Full test suite — no regressions
 7. Commit when done
 
 DEMO STORY:
-  Fleet executing intercept mission. Operator toggles COMMS DENIED.
-  Header turns red: "COMMS DENIED." Command panel greys out. Fleet keeps
-  pursuing the contact. Drone keeps tracking. After 5 minutes, fleet
-  completes intercept and autonomously returns to base (comms_lost_behavior).
-  Operator restores comms. Green flash: "COMMS RESTORED." Controls re-enabled.
-  The fleet operated for 5 minutes with zero human input.
+  Fleet executing intercept on bogey-1. Operator toggles COMMS DENIED.
+  Red banner: "⛔ COMMS DENIED — AUTONOMOUS MODE." Timer starts.
+  Command panel greys out. Fleet keeps pursuing. Drone keeps tracking.
+
+  Now toggle GPS DENIED too. Both indicators red. Fleet navigating on
+  dead reckoning AND operating without human orders. DR drift visible.
+
+  bogey-2 spawned at 3000m. Threat detector fires. Drone auto-retasks
+  to track bogey-2. After 60 seconds with no operator: fleet auto-dispatches
+  intercept on bogey-2. MissionLog: "AUTO-INTERCEPT: bogey-2 — comms denied
+  95s, threat at critical range, no operator response."
+
+  Operator restores comms. Green flash. "COMMS RESTORED after 142s."
+  Autonomous actions summary shown. Controls re-enabled.
+
+  THE FLEET FOUGHT TWO ENGAGEMENTS WITH ZERO HUMAN INPUT UNDER DUAL FAILURE.
 ```
 
 ---
 
-## AUDIT 11: Cross-Domain Kill Chain — Drone Hands Off to Fleet
-**Goal**: Drone detects and tracks a contact, provides targeting data to surface vessels, fleet converges based on drone's sensor feed. This demonstrates multi-domain coordination and is the core of JADC2.
+## AUDIT 11: Cross-Domain Kill Chain — Sensor-to-Effector Loop
+**Goal**: The drone becomes the fleet's eyes. It detects, tracks, and locks onto contacts, then relays targeting data to surface vessels for intercept. This is JADC2 (Joint All-Domain Command & Control) in miniature — the single most impressive capability for a defense demo.
 
 ```
 Execute Audit 11 — Cross-Domain Kill Chain for the LocalFleet project.
 
 Read CLAUDE.md first. Then read docs/localfleet_audit_plan.md — focus on AUDIT 11.
+READ THE BLOCKERS SECTION — especially Blocker 4 (kill chain uses threat_detector,
+doesn't duplicate it), Blocker 7 (TRACK pattern needs orbit for sustained lock).
 
 COMPLETED AUDITS: Audits 1-10 complete. Predictive intercept, auto threat
-response, comms-denied autonomy all working. 147+ tests passing.
+response, comms-denied autonomy all working. Tests passing.
 
-YOUR TASK: Make the drone provide targeting data to surface vessels, creating
-a sensor-to-effector loop across domains (air → surface).
+YOUR TASK: Build the sensor-to-effector loop: drone sensor model → targeting
+data relay → kill chain state machine → fleet intercepts using drone's data.
 
 ────────────────────────────────────────────────────────────────────
 THE PROBLEM
 ────────────────────────────────────────────────────────────────────
 
-Currently the drone and surface vessels operate independently. They happen
-to be on the same map, but:
-- The drone doesn't "see" contacts or relay information
+Currently the drone and surface vessels operate independently. They share
+a map but not information:
+- The drone doesn't "see" contacts — it flies patterns geometrically
 - Surface vessels don't receive targeting data from the drone
-- There's no handoff between domains
-- The drone patterns (ORBIT, SWEEP, TRACK, STATION) are geometric — they
-  don't interact with the contact system
+- When the fleet intercepts, it uses OMNISCIENT contact position from the
+  sim (fleet_manager.contacts dict) — not sensor data
+- The drone auto-tracks from Audit 9, but that's just a waypoint update —
+  there's no concept of the drone having a "sensor lock" or relaying data
 
-A defense CEO would ask: "Do they talk to each other?"
-The answer is no. This is the biggest architectural gap.
+The architectural gap: there is NO information flow between domains.
+The drone and surface fleet are two independent systems that happen to
+share a screen. A defense CEO would immediately ask: "Do they talk to
+each other?" The answer is no.
+
+WHAT WE ALREADY HAVE (from Audit 9):
+- threat_detector.py: assess_threats() produces threat_level per contact
+  (none/detected/warning/critical) based on range from FLEET CENTROID
+- fleet_manager._check_threats(): runs every ~1s, auto-retasks drone to
+  TRACK on warning/critical range
+- DroneCoordinator.generate_track_waypoints(): produces a single point
+  behind the target — NOT sustained tracking orbit
+
+WHAT'S MISSING:
+- Drone has no sensor model (detection range, FOV)
+- No targeting data relay (drone → fleet_manager → fleet nav)
+- No kill chain phases connecting detection → engagement
+- DroneCoordinator TRACK creates one point, not an orbit — drone reaches
+  it and stops, doesn't maintain continuous tracking coverage
 
 ────────────────────────────────────────────────────────────────────
 WHAT TO BUILD
 ────────────────────────────────────────────────────────────────────
 
-A) DRONE SENSOR MODEL (modify drone_dynamics.py or new: src/fleet/drone_sensor.py)
+A) DRONE SENSOR MODEL (new file: src/fleet/drone_sensor.py)
 
-   The drone has a simulated sensor with a detection range:
+   Keep this SEPARATE from threat_detector.py. The fleet's detection
+   (threat_detector, 8km range) is the fleet's organic sensors. The drone
+   sensor is a DIFFERENT, more precise sensor at shorter range.
 
-   DRONE_SENSOR_RANGE = 3000.0  # meters — drone can "see" contacts within 3km
-   DRONE_SENSOR_FOV = 120.0     # degrees — forward-looking sensor cone
+   DRONE_SENSOR_RANGE = 3000.0  # meters — high-res sensor, shorter range
+   DRONE_SENSOR_FOV = 120.0     # degrees — forward-looking cone
 
-   def drone_detect_contacts(drone_x, drone_y, drone_heading,
-                              contacts: dict) -> List[str]:
-       """Return contact_ids visible to the drone's sensor."""
-       For each contact:
-       - Compute distance from drone
-       - Compute bearing from drone
-       - If distance < SENSOR_RANGE and bearing within FOV: detected
-       Return list of detected contact_ids
+   @dataclass
+   class TargetingData:
+       contact_id: str
+       bearing: float        # radians from drone to contact
+       range_m: float        # distance in meters
+       contact_x: float      # estimated contact position (from drone's sensor)
+       contact_y: float      # estimated contact position
+       confidence: float     # 1.0 = perfect, degrades with range
+       locked: bool          # True if drone is in TRACK + within range + in FOV
 
-   When the drone is in TRACK pattern and within sensor range of a contact:
-   - The drone "locks on" — it has a targeting solution
-   - Store: drone.tracked_contact_id = contact_id
-   - Store: drone.target_bearing, drone.target_range (updated each step)
+   def drone_detect_contacts(drone_x: float, drone_y: float,
+                              drone_heading: float, contacts: dict,
+                              sensor_range: float = DRONE_SENSOR_RANGE,
+                              fov_deg: float = DRONE_SENSOR_FOV
+                              ) -> list[TargetingData]:
+       """Evaluate which contacts the drone can see."""
+       results = []
+       for cid, contact in contacts.items():
+           dx = contact.x - drone_x
+           dy = contact.y - drone_y
+           dist = math.sqrt(dx*dx + dy*dy)
+           if dist > sensor_range:
+               continue
+           bearing = math.atan2(dy, dx)
+           # Check FOV: is bearing within fov_deg/2 of drone heading?
+           angle_diff = abs((bearing - drone_heading + math.pi) % (2*math.pi) - math.pi)
+           if math.degrees(angle_diff) > fov_deg / 2:
+               continue
+           confidence = max(0.3, 1.0 - (dist / sensor_range) * 0.7)
+           results.append(TargetingData(
+               contact_id=cid, bearing=bearing, range_m=dist,
+               contact_x=contact.x, contact_y=contact.y,
+               confidence=confidence, locked=False,
+           ))
+       return results
 
-B) TARGETING DATA RELAY (modify fleet_manager.py step())
+   IMPORTANT: confidence degrades with range. At 3km, confidence is 0.3.
+   At 0m, confidence is 1.0. This matters for the decision trail (Audit 12).
 
-   When the drone has a tracked contact:
-   1. Compute contact position from drone's perspective
-      (drone_x + range * cos(bearing), drone_y + range * sin(bearing))
-   2. Store as drone.relayed_target = {contact_id, x, y, bearing, range, confidence}
-   3. Surface vessels can "receive" this targeting data
+B) KILL CHAIN STATE MACHINE (add to fleet_manager.py)
 
-   In step(), when the drone has a locked target AND fleet is executing
-   intercept AND continuous replanning is active:
-   - Use the DRONE'S tracked position for intercept replanning
-     (instead of the omniscient contact.x, contact.y from the sim)
-   - This creates the relay chain: drone sensor → drone targeting → fleet nav
+   The kill chain phases are DRIVEN BY existing systems, not parallel to them:
 
-   For now, the relay is perfect (no noise, no latency). Future enhancement
-   could add sensor noise proportional to range.
+   self.kill_chain_phase: str | None = None
+   self.kill_chain_target: str | None = None
+   self.targeting_data: TargetingData | None = None
 
-C) AUTOMATIC HANDOFF SEQUENCE (modify fleet_manager.py)
+   Phase transitions in a new method _advance_kill_chain() called from step():
 
-   The full kill chain sequence (triggered by threat detector from Audit 9):
+   PHASE: None → "DETECT"
+     Trigger: threat_detector reports any contact at threat_level != "none"
+     (This ALREADY HAPPENS in _check_threats from Audit 9)
+     Action: set kill_chain_phase = "DETECT", log transition
 
-   Phase 1 — DETECT: Contact enters detection range (8km).
-     Fleet logs: "CONTACT DETECTED: bogey-1 at 7.2km"
-     No auto-action yet.
+   PHASE: "DETECT" → "TRACK"
+     Trigger: drone has been auto-tasked to TRACK (Audit 9 does this on warning)
+     Detection: drone_coordinator._current_pattern == DronePattern.TRACK
+     Action: set kill_chain_phase = "TRACK", log transition
 
-   Phase 2 — TRACK: Contact enters warning range (5km).
-     Drone auto-tasks to TRACK the contact (Audit 9).
-     Fleet logs: "AUTO: Eagle-1 vectored to track bogey-1"
+   PHASE: "TRACK" → "LOCK"
+     Trigger: drone is within sensor range AND contact is in FOV
+     Detection: call drone_detect_contacts() — if any result has locked=True
+     Action: store targeting_data, set kill_chain_phase = "LOCK"
+     CRITICAL: set targeting_data.locked = True when drone is in TRACK pattern
+     AND within sensor range AND contact in FOV
 
-   Phase 3 — LOCK: Drone gets within sensor range (3km) of contact.
-     Drone achieves targeting solution.
-     Fleet logs: "LOCK: Eagle-1 tracking bogey-1 — bearing 042° range 2.8km"
-     Dashboard shows targeting data on map (bearing line from drone to contact)
+   PHASE: "LOCK" → "ENGAGE"
+     Trigger: operator clicks intercept button (Audit 9) OR auto-engage
+     from comms-denied escalation (Audit 10)
+     Detection: active_mission changes to INTERCEPT while lock is held
+     Action: set kill_chain_phase = "ENGAGE"
 
-   Phase 4 — ENGAGE: Operator approves intercept (or auto after comms timeout).
-     Surface vessels dispatch to intercept point using DRONE's targeting data.
-     Fleet logs: "ENGAGE: Fleet intercepting bogey-1 via Eagle-1 targeting"
+   PHASE: "ENGAGE" → "CONVERGE"
+     Trigger: any surface vessel within 1000m of contact
+     Action: set kill_chain_phase = "CONVERGE"
+     When any vessel within 200m: kill_chain_phase = None (complete)
 
-   Phase 5 — CONVERGE: Fleet closes on contact while drone maintains track.
-     Drone updates targeting. Fleet replans based on drone's data.
-     When fleet is within 500m of contact: "INTERCEPT COMPLETE"
+   PHASE RESET: If contact is removed or goes out of range, reset to None.
 
-   Store the current phase in fleet_manager as self.kill_chain_phase (str or None).
-   Include in FleetState for dashboard display.
+   def _advance_kill_chain(self):
+       """Progress kill chain based on current state."""
+       if not self.contacts:
+           self.kill_chain_phase = None
+           self.kill_chain_target = None
+           self.targeting_data = None
+           return
 
-D) DASHBOARD — KILL CHAIN VISUALIZATION
+       # Run drone sensor
+       drone_heading_rad = math.radians(90 - self.drone.heading) if hasattr(self.drone, 'heading') else 0.0
+       # Get drone heading in radians (math convention)
+       detections = drone_detect_contacts(
+           self.drone.x, self.drone.y, drone_heading_rad, self.contacts
+       )
+
+       # Update targeting data
+       if detections:
+           best = max(detections, key=lambda d: d.confidence)
+           # Lock if drone is actively tracking this contact
+           if (self.drone_coordinator._current_pattern == DronePattern.TRACK
+                   and best.range_m < DRONE_SENSOR_RANGE):
+               best.locked = True
+           self.targeting_data = best
+           self.kill_chain_target = best.contact_id
+       else:
+           self.targeting_data = None
+
+       # Phase transitions
+       if self.kill_chain_phase is None:
+           if self.threat_assessments:
+               real_threats = [t for t in self.threat_assessments
+                               if t.threat_level != "none"]
+               if real_threats:
+                   self.kill_chain_phase = "DETECT"
+                   self.kill_chain_target = real_threats[0].contact_id
+
+       elif self.kill_chain_phase == "DETECT":
+           if self.drone_coordinator._current_pattern == DronePattern.TRACK:
+               self.kill_chain_phase = "TRACK"
+
+       elif self.kill_chain_phase == "TRACK":
+           if self.targeting_data and self.targeting_data.locked:
+               self.kill_chain_phase = "LOCK"
+
+       elif self.kill_chain_phase == "LOCK":
+           if self.active_mission == MissionType.INTERCEPT:
+               self.kill_chain_phase = "ENGAGE"
+
+       elif self.kill_chain_phase == "ENGAGE":
+           # Check if any vessel is within convergence range
+           target = self.contacts.get(self.kill_chain_target)
+           if target:
+               for v in self.vessels.values():
+                   dist = math.sqrt(
+                       (v["state"][0] - target.x)**2 +
+                       (v["state"][1] - target.y)**2
+                   )
+                   if dist < 1000.0:
+                       self.kill_chain_phase = "CONVERGE"
+                       break
+
+       elif self.kill_chain_phase == "CONVERGE":
+           target = self.contacts.get(self.kill_chain_target)
+           if target:
+               for v in self.vessels.values():
+                   dist = math.sqrt(
+                       (v["state"][0] - target.x)**2 +
+                       (v["state"][1] - target.y)**2
+                   )
+                   if dist < 200.0:
+                       self.kill_chain_phase = None  # Complete
+                       break
+           else:
+               self.kill_chain_phase = None  # Target gone
+
+C) DRONE TARGETING FEEDS INTERCEPT REPLAN (modify _replan_intercept)
+
+   Currently _replan_intercept() reads contact position from the omniscient
+   sim state (self.contacts[id].x, .y). When the drone has a targeting lock,
+   use the DRONE'S targeting data instead:
+
+   In _replan_intercept(), after finding the closest target:
+     if self.targeting_data and self.targeting_data.locked:
+         # Use drone's sensor data instead of omniscient sim data
+         target_x = self.targeting_data.contact_x
+         target_y = self.targeting_data.contact_y
+         # (For now these are the same since relay is perfect,
+         #  but the architecture separates them for future noise)
+
+   This is architecturally important even though the values are identical
+   today — it proves the fleet navigates via sensor data, not god-mode.
+
+D) TRACK PATTERN FIX (modify DroneCoordinator)
+
+   Current generate_track_waypoints() generates ONE point 200m behind target.
+   Drone flies there and then has no waypoints left — it doesn't orbit.
+
+   Fix: when drone is in TRACK and reaches its waypoint, regenerate the
+   track waypoint based on the contact's CURRENT position. This already
+   partially happens via the auto-retask in _check_threats(), but it only
+   fires every 4 steps and only when threat level is warning/critical.
+
+   Better approach: in fleet_manager.step(), after drone.step(dt), if
+   drone is in TRACK pattern and contacts exist:
+     contact = self.contacts.get(self.kill_chain_target)
+     if contact:
+         self.drone_coordinator.assign_pattern(
+             DronePattern.TRACK,
+             [Waypoint(x=contact.x, y=contact.y)],
+             altitude=100.0,
+         )
+   Do this every THREAT_CHECK_INTERVAL steps (reuse the counter) to avoid
+   per-step jitter. This keeps the drone continuously pursuing the contact.
+
+E) KILL CHAIN DATA IN FLEET STATE (modify get_fleet_state_dict())
+
+   Add to data["autonomy"] (same namespace as comms-denied):
+   data["autonomy"]["kill_chain_phase"] = self.kill_chain_phase
+   data["autonomy"]["kill_chain_target"] = self.kill_chain_target
+
+   Add targeting data if available:
+   if self.targeting_data:
+       data["autonomy"]["targeting"] = {
+           "contact_id": self.targeting_data.contact_id,
+           "bearing_deg": (90 - math.degrees(self.targeting_data.bearing)) % 360,
+           "range_m": self.targeting_data.range_m,
+           "confidence": self.targeting_data.confidence,
+           "locked": self.targeting_data.locked,
+           "drone_x": self.drone.x,
+           "drone_y": self.drone.y,
+       }
+
+F) DASHBOARD — KILL CHAIN VISUALIZATION
 
    1. FleetMap.jsx:
-      - When drone has a targeting lock, draw a line from drone to contact
-        (yellow, thin, labeled "TRACK")
-      - When fleet is engaging, draw lines from fleet to intercept point
-        (red, converging arrows)
-      - Show drone's sensor cone as a semi-transparent wedge (optional,
-        nice-to-have)
+      - When targeting_data.locked: draw yellow line from drone to contact
+        labeled "LOCK" with range display
+      - When kill_chain_phase == "ENGAGE": draw red converging lines from
+        each surface vessel to intercept point
+      - Optional: semi-transparent sensor cone wedge from drone (nice for demo)
 
    2. MissionStatus.jsx:
-      - Show kill chain phase: "PHASE 3: DRONE LOCK — bogey-1"
-      - Show targeting data: "TGT: bogey-1 via Eagle-1 — 2.8km @ 042°"
+      - Kill chain phase indicator with color progression:
+        DETECT=yellow, TRACK=amber, LOCK=orange, ENGAGE=red, CONVERGE=pulsing red
+      - Format: "KILL CHAIN: LOCK — bogey-1 via Eagle-1 (2.8km @ 042°)"
+      - Show confidence percentage when locked
 
    3. MissionLog.jsx:
-      - Log each phase transition with timestamp
+      - Log each phase transition: "KILL CHAIN → TRACK: Eagle-1 pursuing bogey-1"
 
 ────────────────────────────────────────────────────────────────────
 WHAT NOT TO DO
 ────────────────────────────────────────────────────────────────────
 
-- Do NOT add actual radar/sensor physics — simple range+FOV check is enough
-- Do NOT add sensor noise yet — perfect relay first, noise is a future enhancement
-- Do NOT modify DroneCoordinator patterns — just add sensor awareness on top
+- Do NOT add radar physics or wave propagation — range + FOV is enough
+- Do NOT add sensor noise to the relay YET — perfect relay first
+  (architecture supports noise later via confidence field)
 - Do NOT modify schemas.py
-- Do NOT break the ability to manually dispatch intercepts without the kill chain
+- Do NOT duplicate threat_detector logic — kill chain phases are DRIVEN BY
+  threat_detector outputs, not parallel to them
+- Do NOT break manual intercept — kill chain enhances it, doesn't replace it.
+  If operator manually dispatches intercept without a kill chain, it still works.
+- Do NOT modify DroneCoordinator pattern generation signatures — add the
+  continuous tracking update in fleet_manager.step()
 
 ────────────────────────────────────────────────────────────────────
 TEST PLAN
@@ -760,26 +1165,46 @@ TEST PLAN
 New file: tests/test_kill_chain.py
 
 1. test_drone_detects_contact_in_range:
-   Drone at (0,0), contact at (2000, 0) → detected
+   drone_detect_contacts with contact at 2000m → returns TargetingData
 
 2. test_drone_no_detect_out_of_range:
-   Drone at (0,0), contact at (5000, 0) → not detected
+   Contact at 5000m → empty list
 
 3. test_drone_no_detect_outside_fov:
-   Drone heading east, contact behind it → not detected
+   Drone heading east (0 rad), contact due west (behind) → not detected
 
-4. test_drone_tracks_and_relays:
-   Drone in TRACK near contact → tracked_contact_id set, relay data available
+4. test_confidence_degrades_with_range:
+   Contact at 500m → confidence > 0.8. Contact at 2800m → confidence < 0.5
 
-5. test_kill_chain_phase_progression:
-   Spawn contact at 9000m, run steps, verify phase transitions:
-   None → DETECT → TRACK → LOCK → (await engage)
+5. test_kill_chain_detect_phase:
+   Spawn contact at 6000m from fleet → run threat check → kill_chain_phase == "DETECT"
 
-6. test_fleet_uses_drone_targeting:
-   Drone has lock on contact → fleet replan uses drone's relayed position
+6. test_kill_chain_track_phase:
+   Setup: contact at warning range, drone auto-tasked to TRACK
+   → kill_chain_phase == "TRACK"
 
-7. test_kill_chain_in_fleet_state:
-   Active kill chain → get_fleet_state() includes phase and targeting data
+7. test_kill_chain_lock_phase:
+   Setup: drone at (2000, 0), contact at (2500, 0), drone heading east in TRACK
+   → drone_detect_contacts returns locked=True → kill_chain_phase == "LOCK"
+
+8. test_kill_chain_engage_phase:
+   Setup: lock achieved → dispatch intercept → kill_chain_phase == "ENGAGE"
+
+9. test_kill_chain_full_progression:
+   Integration: spawn contact at 9000m moving toward fleet. Run enough steps
+   for all phases: DETECT → TRACK → LOCK. Dispatch intercept → ENGAGE.
+   Run until vessel within 1000m → CONVERGE. Verify all transitions happened.
+
+10. test_kill_chain_reset_on_contact_removal:
+    Active kill chain → remove contact → kill_chain_phase == None
+
+11. test_targeting_data_in_fleet_state:
+    Drone has lock → get_fleet_state_dict() includes targeting data with
+    bearing, range, confidence, locked=True
+
+12. test_drone_continuous_tracking:
+    Drone in TRACK, contact moving → after N steps, drone waypoints have
+    been updated to follow contact (not stuck at original point)
 
 Run: .venv/bin/python -m pytest tests/ -v
 
@@ -787,29 +1212,40 @@ Run: .venv/bin/python -m pytest tests/ -v
 DELIVERABLES
 ────────────────────────────────────────────────────────────────────
 
-1. Drone sensor model (detection range + FOV)
-2. Targeting data relay from drone to fleet_manager
-3. Kill chain phase state machine in fleet_manager
-4. Fleet replanning uses drone targeting data
-5. Dashboard — targeting lines, phase display, log entries
-6. 7 new tests
-7. Full test suite — no regressions
-8. Commit when done
+1. src/fleet/drone_sensor.py — TargetingData + drone_detect_contacts()
+2. fleet_manager.py — kill chain state machine (_advance_kill_chain)
+3. fleet_manager.py — _replan_intercept uses drone targeting when available
+4. fleet_manager.py — continuous drone tracking update in step()
+5. fleet_manager.py — kill chain + targeting in get_fleet_state_dict()
+6. Dashboard — targeting lines, phase indicator, log entries
+7. 12 new tests
+8. Full test suite — no regressions
+9. Commit when done
 
 DEMO STORY:
-  Fleet idle. Contact spawned at 9km. "CONTACT DETECTED" appears in log.
-  Contact closes to 5km. Drone auto-launches to track. Cyan trail streaks
-  toward red marker. Drone gets within 3km: "LOCK — Eagle-1 tracking bogey-1."
-  Yellow targeting line appears from drone to contact. Operator clicks
-  "INTERCEPT." Fleet dispatches to predicted intercept point. Blue arrows
-  converge. Drone maintains overhead track. Fleet arrives: "INTERCEPT COMPLETE."
-  The entire sequence played out across air and surface domains.
+  Fleet idle at base. Contact spawned at 9km heading southwest.
+  threat_detector fires → "CONTACT DETECTED." Kill chain: DETECT.
+  Contact closes to 5km. Drone auto-launches → TRACK. Cyan trail
+  streaks toward contact. Drone closes to 3km → sensor detects contact
+  → LOCK. Yellow targeting line from drone to contact. Dashboard shows:
+  "KILL CHAIN: LOCK — bogey-1 via Eagle-1 (2.8km @ 042°, 72% confidence)"
+
+  Operator clicks INTERCEPT. Kill chain → ENGAGE. Fleet dispatches to
+  predicted intercept point using DRONE'S targeting data. Red convergence
+  lines on map. Drone maintains overhead track, confidence climbing as
+  range decreases. Fleet arrives within 1000m → CONVERGE.
+  "INTERCEPT COMPLETE — full sensor-to-effector loop."
+
+  NOW TOGGLE COMMS DENIED. Repeat with new contact. The entire kill chain
+  plays out autonomously: DETECT → TRACK → LOCK → auto-ENGAGE (after 60s
+  delay) → CONVERGE. Zero human input. Cross-domain. Under comms denial.
+  THAT is the demo.
 ```
 
 ---
 
-## AUDIT 12: Decision Audit Trail — Explainable Autonomy
-**Goal**: Log not just what happened, but WHY. Every autonomous decision gets a human-readable rationale. This is non-negotiable for defense — operators must trust the system.
+## AUDIT 12: Decision Audit Trail — The AI Explains Itself
+**Goal**: Every autonomous decision gets a human-readable rationale showing WHAT was decided, WHY it was chosen, and WHAT alternatives were rejected. This is non-negotiable for defense — operators must trust the system, and review boards must be able to audit it. This is the difference between a toy and a weapon system.
 
 ```
 Execute Audit 12 — Decision Audit Trail for the LocalFleet project.
@@ -817,25 +1253,38 @@ Execute Audit 12 — Decision Audit Trail for the LocalFleet project.
 Read CLAUDE.md first. Then read docs/localfleet_audit_plan.md — focus on AUDIT 12.
 
 COMPLETED AUDITS: Audits 1-11 complete. Full kill chain working.
-147+ tests passing. Do NOT break them.
+Tests passing. Do NOT break them.
 
-YOUR TASK: Add explainable decision logging — every autonomous action the
-system takes must be accompanied by a human-readable rationale showing WHY.
+YOUR TASK: Add explainable decision logging. Every autonomous action —
+intercept prediction, asset allocation, threat assessment, auto-track,
+comms fallback, kill chain transitions, replanning — gets logged with
+a human-readable rationale. Stream decisions via WebSocket for real-time
+dashboard display. Expose via REST for post-mission review.
 
 ────────────────────────────────────────────────────────────────────
 THE PROBLEM
 ────────────────────────────────────────────────────────────────────
 
-The system now makes autonomous decisions (drone auto-track, threat
-assessment, intercept prediction, comms-denied fallback). But when these
-happen, the only feedback is "alpha → EXECUTING." The operator has no
-idea WHY alpha was chosen, why the intercept point is where it is, or
-why the drone went to track that specific contact.
+The system now makes 7+ categories of autonomous decisions:
+- Intercept point prediction (where to go)
+- Asset allocation (who goes where)
+- Threat assessment (how dangerous is this contact)
+- Auto-drone retask (Eagle-1 to TRACK)
+- Comms-denied fallback (RTB, hold, or auto-engage)
+- Kill chain phase transitions (DETECT → TRACK → LOCK → ENGAGE)
+- Intercept replanning (waypoint update when target moves)
 
-Defense systems require EXPLAINABILITY. An autonomous action that can't
-be explained is an autonomous action that won't be trusted. Every
-operator, every commander, every review board will ask: "Why did it do
-that?"
+When any of these happen, the operator sees "alpha → EXECUTING."
+That's it. No WHY. No alternatives considered. No confidence level.
+No reasoning chain.
+
+A defense CEO will ask: "Why did it pick alpha over bravo?"
+A review board will ask: "What was the system's confidence when it
+auto-engaged under comms denial?"
+A commander will ask: "Why did it replan to that position?"
+
+If you can't answer these, the system is a black box. Black boxes
+don't get fielded. Explainability IS the product for defense autonomy.
 
 ────────────────────────────────────────────────────────────────────
 WHAT TO BUILD
@@ -843,88 +1292,243 @@ WHAT TO BUILD
 
 A) DECISION LOG DATA STRUCTURE (new: src/fleet/decision_log.py)
 
+   from dataclasses import dataclass, field
+   from collections import deque
+   import time
+
+   @dataclass
    class DecisionEntry:
        timestamp: float
-       decision_type: str    # "intercept_solution", "threat_assessment",
-                             # "auto_track", "comms_fallback", "replan",
-                             # "asset_allocation"
-       action_taken: str     # "Dispatched alpha to (4200, 1800)"
-       rationale: str        # "Alpha selected: closest to target (2.1km),
-                             #  heading within 15° of intercept bearing,
-                             #  ETA 4m 22s. Bravo rejected: 3.8km, 
-                             #  unfavorable heading (87° off)."
-       assets_involved: List[str]
-       alternatives_considered: List[str]  # what was NOT chosen and why
+       decision_type: str
+       action_taken: str
+       rationale: str
+       confidence: float = 1.0
+       assets_involved: list[str] = field(default_factory=list)
+       alternatives: list[str] = field(default_factory=list)
+       parent_id: str | None = None   # links to triggering decision
+
+       @property
+       def id(self) -> str:
+           return f"{self.decision_type}_{self.timestamp:.3f}"
+
+   Valid decision_types:
+   - "intercept_solution"   — where to intercept
+   - "asset_allocation"     — which asset goes where and why
+   - "threat_assessment"    — contact evaluated
+   - "auto_track"           — drone auto-retasked
+   - "comms_fallback"       — autonomous action under comms denial
+   - "auto_engage"          — fully autonomous intercept (comms denied)
+   - "kill_chain_transition" — phase change in kill chain
+   - "replan"               — intercept point updated
+   - "formation_selection"  — why this formation for this mission
 
    class DecisionLog:
-       entries: List[DecisionEntry]  # bounded ring buffer, max 200
+       def __init__(self, max_entries: int = 200):
+           self._entries: deque[DecisionEntry] = deque(maxlen=max_entries)
 
-       def log_decision(self, decision_type, action, rationale, assets, alternatives)
-       def get_recent(self, n=20) -> List[DecisionEntry]
-       def get_by_type(self, decision_type) -> List[DecisionEntry]
+       def log(self, decision_type: str, action: str, rationale: str,
+               confidence: float = 1.0, assets: list[str] | None = None,
+               alternatives: list[str] | None = None,
+               parent_id: str | None = None) -> DecisionEntry:
+           entry = DecisionEntry(
+               timestamp=time.time(),
+               decision_type=decision_type,
+               action_taken=action,
+               rationale=rationale,
+               confidence=confidence,
+               assets_involved=assets or [],
+               alternatives=alternatives or [],
+               parent_id=parent_id,
+           )
+           self._entries.append(entry)
+           return entry
 
-B) INSTRUMENT ALL AUTONOMOUS DECISIONS
+       def get_recent(self, n: int = 20) -> list[DecisionEntry]:
+           return list(self._entries)[-n:]
 
-   Go through every place the system makes a choice and add a decision log
-   entry. These are the key decision points:
+       def get_by_type(self, dtype: str) -> list[DecisionEntry]:
+           return [e for e in self._entries if e.decision_type == dtype]
 
-   1. INTERCEPT PREDICTION (fleet_manager.py — compute_intercept_point):
-      Log: "Intercept solution computed. Target bogey-1 at (3000, 1500)
-      heading 225° at 1.5 m/s. Fleet centroid at (500, 200). Predicted
-      intercept at (2400, 1100), ETA 280s. Convergence angle: 32°."
+       def to_dicts(self, n: int = 10) -> list[dict]:
+           """Serialize recent entries for WebSocket/API."""
+           return [
+               {
+                   "id": e.id,
+                   "timestamp": e.timestamp,
+                   "type": e.decision_type,
+                   "action": e.action_taken,
+                   "rationale": e.rationale,
+                   "confidence": e.confidence,
+                   "assets": e.assets_involved,
+                   "alternatives": e.alternatives,
+                   "parent_id": e.parent_id,
+               }
+               for e in list(self._entries)[-n:]
+           ]
 
-   2. ASSET ALLOCATION (fleet_manager.py — dispatch_command):
-      For each asset dispatched, log why:
-      "Alpha dispatched to (2400, 1100): distance 2.1km, heading offset 15°,
-       ETA 4m22s — best candidate."
-      "Bravo dispatched to (2600, 1100): echelon offset from lead (Alpha)."
-      "Eagle-1 dispatched to TRACK bogey-1: fastest asset (15 m/s), air
-       domain provides overhead surveillance."
+B) INSTRUMENT ALL DECISION POINTS
 
-   3. THREAT DETECTION (threat_detector.py — assess_threats):
-      Log: "bogey-1 assessed: distance 3200m (WARNING range), closing at
-      2.8 m/s, bearing 045° from fleet. Action: recommend TRACK."
+   Add self.decision_log = DecisionLog() to fleet_manager.__init__().
 
-   4. AUTO-DRONE RETASK (fleet_manager.py — auto-response):
-      Log: "AUTO-TRACK decision. Eagle-1 re-tasked from STATION to TRACK
-      bogey-1. Reason: contact entered warning range (3200m). Fleet was
-      idle — no active mission conflict."
+   1. INTERCEPT PREDICTION (dispatch_command, after compute_intercept_point):
 
-   5. COMMS-DENIED FALLBACK (fleet_manager.py):
-      Log: "COMMS FALLBACK: comms denied for 312s, exceeding 300s timeout.
-      Standing orders: return_to_base. Dispatching all assets to home."
+      dist_to_target = math.sqrt(...)
+      eta = dist_to_target / fleet_speed
+      self.decision_log.log(
+          "intercept_solution",
+          f"Intercept point: ({pred_x:.0f}, {pred_y:.0f})",
+          f"Target {target.contact_id} at ({target.x:.0f}, {target.y:.0f}) "
+          f"heading {math.degrees(target.heading):.0f}° at {target.speed:.1f} m/s. "
+          f"Fleet centroid ({cx:.0f}, {cy:.0f}). "
+          f"Predicted intercept ({pred_x:.0f}, {pred_y:.0f}), "
+          f"ETA {eta:.0f}s ({eta/60:.1f}min). "
+          f"Lead distance: {math.sqrt((pred_x-target.x)**2+(pred_y-target.y)**2):.0f}m ahead of target.",
+          confidence=min(1.0, fleet_speed / max(target.speed, 0.1)),
+          assets=[ac.asset_id for ac in surface_cmds],
+      )
 
-   6. REPLAN (fleet_manager.py — continuous replan):
-      Log: "Replan triggered. Intercept point shifted 180m (from (2400,1100)
-      to (2220,1020)). Target moved since last plan. Fleet waypoints updated."
+   2. ASSET ALLOCATION (dispatch_command, per-asset):
 
-C) DECISION LOG API ENDPOINT (add to routes.py)
+      For each surface vessel dispatched:
+      - Compute distance to intercept point
+      - Compute heading offset from current heading to intercept bearing
+      - Compute ETA
+      - Log: "alpha dispatched: 2.1km to intercept, 15° heading offset,
+        ETA 4m22s — closest vessel, most favorable heading."
+      - For non-lead vessels in formation: "bravo dispatched: echelon
+        offset 200m from alpha (formation lead)."
 
-   GET /api/decisions?limit=20&type=intercept_solution
-   Returns recent decision entries, optionally filtered by type.
+      Alternatives: for each vessel NOT chosen as lead (if applicable):
+      "charlie rejected as lead: 3.8km (vs alpha 2.1km), 87° heading offset"
 
-D) DASHBOARD — DECISION PANEL (new: DecisionPanel.jsx or extend MissionLog)
+   3. THREAT ASSESSMENT (_check_threats, per threat):
 
-   Display decision log entries in a scrollable panel:
-   - Each entry shows: timestamp, decision_type badge, action (bold),
-     rationale (expandable), assets involved
-   - Color-code by type: intercept=red, threat=amber, auto=cyan, comms=orange
-   - Most recent at top
-   - Expandable: click to see alternatives_considered
+      For each threat at warning or critical level:
+      self.decision_log.log(
+          "threat_assessment",
+          f"{ta.contact_id}: {ta.threat_level.upper()} at {ta.distance:.0f}m",
+          ta.reason,  # already human-readable from threat_detector
+          confidence=1.0 - (ta.distance / 8000.0),
+      )
 
-   This can replace or augment the existing MissionLog, or be a new tab
-   in the sidebar.
+   4. AUTO-DRONE RETASK (_check_threats, when drone is re-tasked):
+
+      prev_pattern = self.drone_coordinator._current_pattern
+      self.decision_log.log(
+          "auto_track",
+          f"Eagle-1 re-tasked: {prev_pattern} → TRACK {ta.contact_id}",
+          f"Contact at {ta.distance:.0f}m ({ta.threat_level} range). "
+          f"Fleet {'idle' if not active_intercept else 'not on intercept'} "
+          f"— no mission conflict. Drone is fastest asset (15 m/s) "
+          f"with aerial sensor advantage.",
+          assets=["eagle-1"],
+      )
+
+   5. COMMS-DENIED ACTIONS (_execute_comms_fallback, _auto_engage_threat):
+
+      self.decision_log.log(
+          "comms_fallback",
+          f"AUTO-RTB: standing orders = {self.comms_lost_behavior}",
+          f"Comms denied for {elapsed:.0f}s. Fleet was idle. "
+          f"Executing pre-briefed comms_lost_behavior: {self.comms_lost_behavior}. "
+          f"No operator available to issue commands.",
+          confidence=1.0,  # following explicit standing orders
+      )
+
+      For auto-engage:
+      self.decision_log.log(
+          "auto_engage",
+          f"AUTO-INTERCEPT: {target_id}",
+          f"Comms denied {elapsed:.0f}s. {target_id} at critical range "
+          f"({dist:.0f}m). Escalation delay ({DELAY}s) exceeded. "
+          f"No operator response. Autonomous engagement authorized by "
+          f"timeout policy. Kill chain phase: {self.kill_chain_phase}.",
+          confidence=0.7,  # lower confidence for autonomous decisions
+          assets=list(self.vessels.keys()) + ["eagle-1"],
+      )
+
+   6. KILL CHAIN TRANSITIONS (_advance_kill_chain):
+
+      On each phase change:
+      self.decision_log.log(
+          "kill_chain_transition",
+          f"Kill chain: {old_phase} → {new_phase}",
+          f"Target: {self.kill_chain_target}. "
+          f"Trigger: {trigger_reason}. "
+          f"Drone targeting: {'locked' if self.targeting_data and self.targeting_data.locked else 'searching'}.",
+      )
+
+   7. REPLAN (_replan_intercept, when waypoints actually update):
+
+      self.decision_log.log(
+          "replan",
+          f"Intercept waypoints updated: shift {shift:.0f}m",
+          f"Previous intercept ({cur_wp_x:.0f}, {cur_wp_y:.0f}) → "
+          f"new ({pred_x:.0f}, {pred_y:.0f}). Target moved since last plan. "
+          f"Shift exceeded {REPLAN_SHIFT_THRESHOLD}m threshold.",
+          parent_id=last_intercept_decision_id,  # link to original
+      )
+
+C) DECISION LOG IN FLEET STATE (modify get_fleet_state_dict())
+
+   Stream the last N decisions via WebSocket so dashboard updates in real-time:
+   data["decisions"] = self.decision_log.to_dicts(n=10)
+
+   This means every 250ms the dashboard receives the 10 most recent decisions.
+   New decisions appear instantly. No polling needed.
+
+D) DECISION LOG API ENDPOINT (add to routes.py)
+
+   GET /api/decisions?limit=50&type=intercept_solution
+   Returns decision entries for post-mission review.
+
+   @router.get("/api/decisions")
+   async def get_decisions(request: Request,
+                           limit: int = Query(50),
+                           type: str | None = Query(None)):
+       fm = request.app.state.commander.fleet_manager
+       if type:
+           entries = fm.decision_log.get_by_type(type)[-limit:]
+       else:
+           entries = fm.decision_log.get_recent(limit)
+       return {"decisions": [serialize(e) for e in entries]}
+
+E) DASHBOARD — DECISION PANEL
+
+   Replace or augment MissionLog.jsx with decision display:
+
+   1. Each decision entry shows:
+      - Timestamp (relative: "12s ago")
+      - Decision type as colored badge:
+        intercept=red, threat=amber, auto_track=cyan, comms=orange,
+        kill_chain=purple, replan=blue, auto_engage=pulsing red
+      - Action (bold, one line)
+      - Rationale (expandable on click — starts collapsed)
+      - Confidence bar (0-100%, color-coded: green >80%, amber 50-80%, red <50%)
+
+   2. Alternatives section (expandable):
+      "Considered: charlie (rejected: 3.8km, 87° off heading)"
+
+   3. Decision chain visualization:
+      When parent_id is set, show a subtle link: "↳ follows: intercept_solution_1234"
+      This shows the reasoning chain: intercept_solution → asset_allocation → replan
+
+   4. Auto-scroll to newest decision. Pause auto-scroll when user scrolls up.
 
 ────────────────────────────────────────────────────────────────────
 WHAT NOT TO DO
 ────────────────────────────────────────────────────────────────────
 
-- Do NOT use the existing SQLite mission_logger for this — that's for
-  event replay. The decision log is for real-time explainability.
+- Do NOT use the existing SQLite mission_logger — that's for event replay,
+  this is for real-time explainability. They serve different purposes.
 - Do NOT log every step() tick — only log when a DECISION is made
 - Do NOT modify schemas.py
-- Do NOT make the rationale computation expensive — it's string formatting
-  of data you already have
+- Do NOT make rationale computation expensive — it's string formatting
+  of data you already computed for the decision itself
+- Do NOT log decisions with empty rationales — every entry MUST have a
+  non-trivial explanation. "Executed command" is NOT a rationale.
+- Do NOT stream all 200 entries every tick — only the last 10 via WebSocket.
+  REST endpoint serves the full history.
 
 ────────────────────────────────────────────────────────────────────
 TEST PLAN
@@ -933,23 +1537,46 @@ TEST PLAN
 New file: tests/test_decision_log.py
 
 1. test_decision_log_stores_entries:
-   Log 3 decisions → get_recent(3) returns all 3
+   Log 3 decisions → get_recent(3) returns all 3 in order
 
-2. test_decision_log_bounded:
-   Log 250 decisions → length is 200 (ring buffer)
+2. test_decision_log_bounded_ring_buffer:
+   Log 250 decisions → len(entries) == 200, oldest are dropped
 
-3. test_intercept_logs_rationale:
-   Dispatch intercept → decision log has entry with type "intercept_solution"
-   and non-empty rationale containing distance and ETA
+3. test_decision_log_filter_by_type:
+   Log mixed types → get_by_type("replan") returns only replans
 
-4. test_threat_assessment_logs:
-   Contact at warning range → decision log has "threat_assessment" entry
+4. test_decision_log_to_dicts:
+   Log decisions → to_dicts(5) returns list of dicts with all fields
 
-5. test_auto_track_logs_reason:
-   Drone auto-tracks → decision log has "auto_track" entry explaining why
+5. test_decision_log_parent_chain:
+   Log parent, then child with parent_id → child.parent_id matches parent.id
 
-6. test_decision_log_api:
-   GET /api/decisions returns JSON list of entries
+6. test_intercept_dispatch_logs_solution:
+   Dispatch intercept with contacts → decision_log has "intercept_solution"
+   entry with non-empty rationale containing "ETA" and "intercept point"
+
+7. test_intercept_dispatch_logs_allocation:
+   Dispatch intercept → decision_log has "asset_allocation" entries for
+   each surface vessel, each with distance and heading offset in rationale
+
+8. test_threat_assessment_logs_decision:
+   Contact at warning range → threat check → decision_log has
+   "threat_assessment" entry with distance and threat level
+
+9. test_auto_track_logs_decision:
+   Drone auto-retasked → decision_log has "auto_track" entry explaining
+   why (contact range, fleet idle status, pattern change)
+
+10. test_replan_logs_shift:
+    Intercept replan triggers → decision_log has "replan" entry with
+    shift distance and old/new intercept points
+
+11. test_decisions_in_fleet_state_dict:
+    Log decisions → get_fleet_state_dict() includes "decisions" key
+    with list of serialized entries
+
+12. test_decision_api_endpoint:
+    Log decisions → GET /api/decisions returns JSON list
 
 Run: .venv/bin/python -m pytest tests/ -v
 
@@ -958,147 +1585,289 @@ DELIVERABLES
 ────────────────────────────────────────────────────────────────────
 
 1. src/fleet/decision_log.py — DecisionEntry + DecisionLog classes
-2. fleet_manager.py — instrument all decision points
-3. routes.py — GET /api/decisions endpoint
-4. Dashboard — decision panel with rationale display
-5. 6 new tests
-6. Full test suite — no regressions
-7. Commit when done
+2. fleet_manager.py — DecisionLog instance + instrument ALL 7 decision points
+3. fleet_manager.py — decisions in get_fleet_state_dict()
+4. routes.py — GET /api/decisions endpoint
+5. Dashboard — decision panel with rationale, confidence bars, type badges
+6. 12 new tests
+7. Full test suite — no regressions
+8. Commit when done
 
 DEMO STORY:
-  During the intercept demo, the decision panel shows WHY each choice was
-  made in real time. "Alpha selected: closest asset, 15° heading offset."
-  "Intercept point: (2400, 1100) — target predicted 280s ahead." "Drone
-  re-tasked: contact entered warning zone." The operator can SEE the AI
-  thinking. This is the trust-builder.
+  Run the full kill chain demo. As the system operates, the decision panel
+  fills with real-time reasoning:
+
+  [THREAT] "bogey-1: WARNING at 4200m, closing 2.8 m/s" (85% confidence)
+  [AUTO-TRACK] "Eagle-1 re-tasked: STATION → TRACK bogey-1 — contact at
+    warning range, fleet idle, drone fastest asset" (90%)
+  [KILL CHAIN] "Kill chain: DETECT → TRACK — Eagle-1 pursuing bogey-1"
+  [KILL CHAIN] "Kill chain: TRACK → LOCK — Eagle-1 sensor lock, 2.1km, 88%"
+  [INTERCEPT] "Intercept point: (2400, 1100) — target heading 225° at 1.5m/s,
+    fleet centroid (500, 200), ETA 4m22s, lead 800m" (92%)
+  [ALLOCATION] "alpha: 2.1km, 15° offset, ETA 4m22s — best candidate"
+  [ALLOCATION] "bravo: echelon +200m from alpha"
+  [ALLOCATION] "charlie: echelon +400m from alpha"
+    ↳ "Rejected as lead: 3.8km, 87° heading offset"
+  [REPLAN] "Waypoints shifted 180m — target moved since last plan"
+
+  Toggle COMMS DENIED. Watch:
+  [COMMS] "AUTO-RTB: comms denied 62s, fleet idle, standing orders = return_to_base" (100%)
+  [AUTO-ENGAGE] "AUTO-INTERCEPT: bogey-2 — comms denied 95s, critical range,
+    no operator response, timeout policy" (70%)
+
+  The operator sees the AI THINKING. Every decision has a WHY.
+  Every autonomous action has a confidence level. Every choice shows
+  what was considered and rejected. THIS is what gets you hired at Havoc.
 ```
 
 ---
 
-## AUDIT 13: Mission-Specific Behaviors — Make Each Mission Type Matter
-**Goal**: The 6 mission types (PATROL, SEARCH, ESCORT, LOITER, AERIAL_RECON, INTERCEPT) should each produce distinct, intelligent fleet behavior instead of all being "go to waypoint."
+## AUDIT 13: Mission-Specific Behaviors — Every Mission Looks Different
+**Goal**: The 6 mission types currently all do the same thing: go to waypoint, stop. A demo that shows "patrol" and "search" looking identical is a demo that shows you didn't build real mission behaviors. Each mission type must produce visually distinct, tactically correct fleet behavior on the map.
 
 ```
 Execute Audit 13 — Mission-Specific Behaviors for the LocalFleet project.
 
 Read CLAUDE.md first. Then read docs/localfleet_audit_plan.md — focus on AUDIT 13.
+READ THE BLOCKERS SECTION — especially Blocker 5 (ESCORT contact designation).
 
 COMPLETED AUDITS: Audits 1-12 complete. Full autonomous C2 system working.
-147+ tests passing. Do NOT break them.
+Tests passing. Do NOT break them.
 
-YOUR TASK: Make each of the 6 mission types produce visually distinct and
-tactically appropriate fleet behavior.
+NOTE: This audit has NO dependency on Audits 10-12. It could be executed
+right after Audit 9 for quick visual wins. The mission behaviors are
+foundation-level and make every other demo look better.
+
+YOUR TASK: Make each of the 6 mission types produce distinct fleet behavior.
+The changes are in fleet_manager.py dispatch_command() and step() ONLY.
+Extract mission behavior into a _mission_specific_step() method to keep
+step() clean (see Blocker 2).
 
 ────────────────────────────────────────────────────────────────────
 THE PROBLEM
 ────────────────────────────────────────────────────────────────────
 
-Right now, ALL mission types do the same thing: go to waypoints in a
-straight line. PATROL and SEARCH look identical. ESCORT doesn't escort
-anything. LOITER doesn't loiter. The mission_type field is stored in
-fleet_manager but IGNORED during execution.
+Right now, ALL mission types do the EXACT same thing:
+1. Receive waypoints
+2. Navigate to waypoints in straight lines
+3. Reach last waypoint → go IDLE
 
-A demo that shows "intercept" and "patrol" looking exactly the same is a
-demo that shows you didn't implement mission behaviors.
+PATROL = go to point, stop.
+SEARCH = go to point, stop.
+ESCORT = go to point, stop (doesn't follow anything).
+LOITER = go to point, stop (doesn't orbit).
+AERIAL_RECON = go to point, stop (drone does nothing special).
+
+The mission_type field is stored in fleet_manager.active_mission but
+COMPLETELY IGNORED during step() execution. It's cosmetic.
+
+The waypoint completion logic (step(), lines 286-292) goes IDLE after
+the last waypoint for ALL missions. That's the single line to change
+for PATROL and LOITER — add mission-specific behavior where the vessel
+currently goes IDLE.
 
 ────────────────────────────────────────────────────────────────────
 WHAT TO BUILD
 ────────────────────────────────────────────────────────────────────
 
-Modify fleet_manager.py dispatch_command() and step() to handle each
-mission type differently. The changes should be MINIMAL and build on
-existing infrastructure.
+Extract a new method: _mission_specific_step() called from step() AFTER
+the current waypoint completion check (line 286). This method handles
+what to do when a vessel reaches its last waypoint based on mission type.
 
 A) PATROL — Continuous Loop
 
-   Current: Go to waypoints, stop at last one, go IDLE.
-   New behavior: When reaching the last waypoint, loop back to the first.
-   Continue indefinitely until RTB or new command.
+   CURRENT: reach last waypoint → IDLE
+   NEW: reach last waypoint → reset i_wpt to 1, continue EXECUTING
 
-   Implementation in step():
-   When mission == PATROL and vessel reaches last waypoint:
-     - Reset i_wpt to 0 (loop back to first waypoint)
-     - Don't go IDLE — stay EXECUTING
-   This creates a visible patrol loop on the map.
-   Drone: ORBIT pattern around the patrol centroid.
+   In step(), when i_wpt >= len(wpts_x) AND mission == PATROL:
+     v["i_wpt"] = 1  # loop back to first real waypoint (0 is start pos)
+     # DON'T set IDLE — stay EXECUTING
+     continue  # skip the IDLE block
 
-B) SEARCH — Expanding Sweep
+   The vessel's waypoint list already contains the full route from dispatch.
+   Resetting i_wpt creates an infinite loop through the waypoints.
+   The trail on the dashboard will show the repeating patrol pattern.
 
-   Current: Go to waypoints (same as patrol).
-   New behavior: Generate a lawnmower/zigzag search pattern from the
-   commanded area.
+   Drone: dispatch with ORBIT pattern around the patrol centroid.
+   In dispatch_command(), when PATROL:
+     centroid_x = mean of all waypoint x values
+     centroid_y = mean of all waypoint y values
+     drone_coordinator.assign_pattern(ORBIT, [centroid], altitude=100)
 
-   Implementation in dispatch_command():
-   When mission == SEARCH:
-     - Take the commanded waypoint as the center of the search area
-     - Generate a zigzag pattern: 4-6 waypoints in a raster scan
-       covering a 500m x 500m area centered on the target
-     - Each vessel gets a slightly offset pattern (parallel tracks
-       with spacing_meters between them)
-   Drone: SWEEP pattern over the same area.
+B) SEARCH — Zigzag Lawnmower Pattern
 
-   The waypoint generation can be simple:
-     base_x, base_y = commanded waypoint
-     for i in range(num_legs):
-       if i % 2 == 0: add (base_x + offset, base_y + i * leg_spacing)
-       else: add (base_x - offset, base_y + i * leg_spacing)
+   CURRENT: go to single waypoint, stop
+   NEW: generate a lawnmower search pattern from the target area
 
-C) ESCORT — Follow a Friendly Contact
+   In dispatch_command(), when mission == SEARCH:
+     For each surface vessel, replace its single waypoint with a zigzag:
 
-   Current: Go to waypoints (same as all others).
-   New behavior: Maintain formation around a designated friendly unit.
+     def _generate_search_pattern(center_x, center_y, width=500.0,
+                                   height=500.0, legs=6, offset=0.0):
+         """Generate zigzag waypoints for a lawnmower search."""
+         wps = []
+         leg_spacing = height / legs
+         half_w = width / 2
+         for i in range(legs):
+             y = center_y - height/2 + i * leg_spacing + offset
+             if i % 2 == 0:
+                 wps.append(Waypoint(x=center_x - half_w, y=y))
+                 wps.append(Waypoint(x=center_x + half_w, y=y))
+             else:
+                 wps.append(Waypoint(x=center_x + half_w, y=y))
+                 wps.append(Waypoint(x=center_x - half_w, y=y))
+         return wps
 
-   Implementation:
-   When mission == ESCORT:
-     - The first waypoint is treated as the escort target's current position
-     - In step(), vessels maintain their formation offset RELATIVE to the
-       escort point (which could be another vessel or a moving waypoint)
-     - For the demo: escort a contact (the contact model already exists)
-     - Vessels match the contact's speed and heading, maintaining formation
+     Give each vessel a parallel track with lateral offset based on vessel
+     index * spacing_meters. This spreads the search across the area.
 
-   This is the simplest approach: in step(), if mission == ESCORT and
-   contacts exist, recompute desired waypoint as:
-     escort_x = contact.x + formation_offset_x
-     escort_y = contact.y + formation_offset_y
-   This keeps the fleet "attached" to the contact.
+     After reaching the last zigzag waypoint: LOOP (same as patrol).
+     This creates continuous search until RTB.
 
-D) LOITER — Station-Keeping Pattern
+     Drone: SWEEP pattern over the same area.
 
-   Current: Go to waypoint, stop, go IDLE.
-   New behavior: Arrive at waypoint, then orbit in a small circle.
+C) ESCORT — Follow a Contact
 
-   Implementation in step():
-   When mission == LOITER and vessel reaches the waypoint:
-     - Don't go IDLE
-     - Switch to a small orbit: generate 4 waypoints in a 200m circle
-       around the loiter point
-     - Loop through them continuously (like PATROL but in a circle)
-   Drone: ORBIT pattern at the loiter point.
+   CURRENT: go to waypoint, stop
+   NEW: continuously track a contact, maintaining formation offset
 
-E) AERIAL_RECON — Drone-Primary Mission
+   ESCORT semantics: operator picks escort by dispatching the ESCORT mission.
+   The fleet attaches to the CLOSEST CONTACT at dispatch time (same convention
+   as INTERCEPT). If no contacts exist, fall back to normal waypoint behavior.
 
-   Current: Same as everything else.
-   New behavior: Drone does a wide SWEEP while surface vessels hold position.
+   In dispatch_command(), when mission == ESCORT AND contacts exist:
+     Store: self._escort_target_id = closest_contact.contact_id
+     Initial waypoints still go to the contact's current position
 
-   Implementation in dispatch_command():
-   When mission == AERIAL_RECON:
-     - Drone: SWEEP pattern over a large area (1000m x 1000m)
-     - Surface vessels: move to a holding point near the recon area and
-       LOITER (small orbit)
-     - Surface vessels provide security while drone does the actual work
+   In step() (_mission_specific_step), when mission == ESCORT:
+     contact = self.contacts.get(self._escort_target_id)
+     if not contact:
+         return  # target gone — hold position
+     # Recompute waypoints to track contact's current position
+     for vid, v in self.vessels.items():
+         if v["status"] != AssetStatus.EXECUTING:
+             continue
+         # Simple: update last waypoint to contact's current position
+         # (formation offsets applied during dispatch still hold)
+         v["waypoints_x"][-1] = contact.x * METERS_TO_NMI
+         v["waypoints_y"][-1] = contact.y * METERS_TO_NMI
 
-F) INTERCEPT — Already enhanced (Audit 8)
-   Predictive interception with continuous replanning. No changes needed.
+   This runs every step, keeping the fleet's destination locked to the
+   contact. The formation offsets (echelon, column, etc.) from dispatch
+   create a protective screen around the escort target.
+
+   Drone: TRACK pattern on the escort target.
+   Self._escort_target_id: str | None = None (add to __init__)
+
+   EDGE CASE: if escort target contact is removed mid-mission, fleet
+   holds position (stop updating waypoints, let vessels reach last known
+   position and go IDLE normally).
+
+D) LOITER — Station-Keeping Orbit
+
+   CURRENT: reach waypoint, stop, IDLE
+   NEW: reach waypoint, generate small circular orbit, loop continuously
+
+   In step() (_mission_specific_step), when mission == LOITER AND
+   vessel reaches last waypoint (i_wpt >= len(wpts_x)):
+     Generate 8 orbit points in a 150m radius circle around the loiter point:
+     loiter_x = wpts_x[-1] / METERS_TO_NMI  # convert back to meters
+     loiter_y = wpts_y[-1] / METERS_TO_NMI
+     orbit_wps_x = [loiter_x * METERS_TO_NMI]  # start pos
+     orbit_wps_y = [loiter_y * METERS_TO_NMI]
+     for i in range(8):
+         angle = i * (2 * math.pi / 8)
+         ox = (loiter_x + 150 * math.cos(angle)) * METERS_TO_NMI
+         oy = (loiter_y + 150 * math.sin(angle)) * METERS_TO_NMI
+         orbit_wps_x.append(ox)
+         orbit_wps_y.append(oy)
+     v["waypoints_x"] = orbit_wps_x
+     v["waypoints_y"] = orbit_wps_y
+     v["i_wpt"] = 1
+     # DON'T set IDLE — stay EXECUTING
+
+   Use a flag v["_loiter_orbit_generated"] = True to avoid regenerating
+   every step. Reset on new dispatch.
+
+   Drone: ORBIT pattern at the loiter point (already exists).
+
+   The result: vessels arrive at the loiter point, then begin circling.
+   On the dashboard, this looks like a holding pattern — visually distinct
+   from a waypoint stop.
+
+E) AERIAL_RECON — Drone Does the Work
+
+   CURRENT: same as everything else
+   NEW: drone sweeps a wide area, surface vessels hold nearby
+
+   In dispatch_command(), when mission == AERIAL_RECON:
+     Drone: SWEEP pattern over a 1000m x 1000m area centered on the
+     commanded waypoint. Use the 2-waypoint convention for SWEEP:
+       sw_corner = Waypoint(x=center_x - 500, y=center_y - 500)
+       ne_corner = Waypoint(x=center_x + 500, y=center_y + 500)
+       drone_coordinator.assign_pattern(SWEEP, [sw_corner, ne_corner], altitude=150)
+
+     Surface vessels: navigate to a holding point 500m south of the recon
+     area center (security position), then LOITER (orbit).
+     Set a flag so step() treats them as LOITER once they arrive.
+
+   This shows proper domain delegation: air does recon, surface provides
+   security. It's the only mission where the drone has primary.
+
+F) INTERCEPT — No Changes
+   Already enhanced by Audit 8 (predictive intercept + replanning).
+   Do NOT touch intercept logic.
+
+────────────────────────────────────────────────────────────────────
+IMPLEMENTATION STRUCTURE
+────────────────────────────────────────────────────────────────────
+
+Add to fleet_manager.py:
+
+1. In __init__:
+   self._escort_target_id: str | None = None
+
+2. In dispatch_command():
+   After existing formation handling, add mission-specific dispatch:
+   if cmd.mission_type == MissionType.SEARCH:
+       # Replace waypoints with zigzag pattern
+   if cmd.mission_type == MissionType.ESCORT and self.contacts:
+       # Store escort target
+   if cmd.mission_type == MissionType.AERIAL_RECON:
+       # Override drone pattern to SWEEP, surface to hold
+
+3. In step(), replace the IDLE block (lines 286-292) with:
+   if i_wpt >= len(wpts_x):
+       if self.active_mission == MissionType.PATROL or \
+          self.active_mission == MissionType.SEARCH:
+           v["i_wpt"] = 1  # loop
+           # continue with navigation using reset i_wpt
+       elif self.active_mission == MissionType.LOITER:
+           if not v.get("_loiter_orbit"):
+               self._generate_loiter_orbit(vid, v, wpts_x, wpts_y)
+           else:
+               v["i_wpt"] = 1  # loop the orbit
+       else:
+           v["status"] = AssetStatus.IDLE  # default: stop
+           ...
+
+4. Add _mission_specific_step() called from step() for ESCORT:
+   if self.active_mission == MissionType.ESCORT:
+       self._update_escort_positions()
 
 ────────────────────────────────────────────────────────────────────
 DASHBOARD CHANGES
 ────────────────────────────────────────────────────────────────────
 
-- MissionStatus.jsx should show the mission type with a distinctive icon
-  or color for each type
-- Patrol loops should be visible as repeating trail patterns on the map
-- Search zigzags should be visible as the fleet sweeps
-- No new components needed — the existing map and status bar handle this
+Minimal dashboard changes needed — the map already renders trails:
+- PATROL: trail shows repeating loop (automatic from looping waypoints)
+- SEARCH: trail shows zigzag pattern (automatic from zigzag waypoints)
+- LOITER: trail shows circular orbit (automatic from orbit waypoints)
+- ESCORT: trail follows the contact (automatic from continuous update)
+
+MissionStatus.jsx: add mission type color coding:
+  PATROL=green, SEARCH=blue, ESCORT=cyan, LOITER=amber,
+  AERIAL_RECON=purple, INTERCEPT=red
 
 ────────────────────────────────────────────────────────────────────
 WHAT NOT TO DO
@@ -1106,41 +1875,72 @@ WHAT NOT TO DO
 
 - Do NOT modify schemas.py
 - Do NOT add new mission types — use the existing 6
-- Do NOT make the behaviors complex — simple geometric patterns are fine
-- Do NOT break the intercept flow (Audit 8)
-- Do NOT change how dispatch_command handles formation offsets —
-  layer mission behaviors ON TOP of existing formation logic
+- Do NOT make behaviors complex — simple geometric patterns are fine
+- Do NOT break intercept (Audit 8) or threat response (Audit 9)
+- Do NOT change formation offset logic — layer mission behaviors ON TOP
+- Do NOT add per-step escort waypoint update without a counter — use
+  THREAT_CHECK_INTERVAL or similar to avoid jitter (update every ~1s)
+- Do NOT modify the vessel dict structure — use existing fields.
+  For the loiter orbit flag, use v.get("_loiter_orbit", False) pattern.
 
 ────────────────────────────────────────────────────────────────────
 TEST PLAN
 ────────────────────────────────────────────────────────────────────
 
-Add to tests/test_fleet_manager.py or new tests/test_mission_behaviors.py:
+New file: tests/test_mission_behaviors.py
 
 1. test_patrol_loops_back:
-   Dispatch patrol with 2 waypoints. Run enough steps for vessel to reach
-   last waypoint. Verify it goes back to first waypoint (i_wpt resets).
-   Verify status remains EXECUTING (not IDLE).
+   Dispatch PATROL with 2 waypoints. Run enough steps for vessel to reach
+   last waypoint. Verify i_wpt resets to 1 (not going IDLE). Run more
+   steps — verify vessel moves BACK toward first waypoint.
+   Verify status remains EXECUTING throughout.
 
-2. test_search_generates_zigzag:
-   Dispatch search to (500, 500). Verify generated waypoints form a
-   zigzag pattern (alternating x values, increasing y values).
+2. test_patrol_multiple_loops:
+   Run 3 full patrol loops. Verify i_wpt resets each time. Vessel never
+   goes IDLE.
 
-3. test_loiter_orbits_after_arrival:
-   Dispatch loiter to (300, 300). Run steps until arrival. Verify vessel
-   does NOT go IDLE. Verify position stays within 300m of loiter point
-   after 200 more steps.
+3. test_search_generates_zigzag_waypoints:
+   Dispatch SEARCH to (500, 500). Verify generated waypoints form a
+   zigzag: alternating x values across center, monotonically increasing y.
+   Verify at least 8 waypoints generated (legs * 2).
 
-4. test_escort_follows_contact:
-   Spawn contact moving east. Dispatch escort. Run 200 steps. Verify
-   fleet centroid tracks the contact's movement direction.
+4. test_search_loops_after_completion:
+   Run search until all zigzag waypoints reached. Verify i_wpt resets
+   (continuous search, same as patrol loop).
 
-5. test_aerial_recon_drone_sweeps:
-   Dispatch aerial_recon. Verify drone has SWEEP pattern. Verify surface
-   vessels are near the area (not dispatched to distant waypoints).
+5. test_loiter_orbits_after_arrival:
+   Dispatch LOITER to (300, 300). Run until arrival. Verify vessel does
+   NOT go IDLE. Run 200 more steps. Verify vessel position stays within
+   200m of (300, 300) — it's orbiting, not drifting away.
 
-6. test_intercept_unchanged:
-   Verify existing intercept tests still pass (regression check).
+6. test_loiter_orbit_generated_once:
+   Reach loiter point. Verify orbit waypoints are generated. Run more
+   steps. Verify waypoints are NOT regenerated (flag prevents it).
+
+7. test_escort_follows_contact:
+   Spawn contact at (2000, 0) moving east at 2 m/s. Dispatch ESCORT.
+   Run 200 steps (50s). Verify fleet centroid has moved EAST (tracking
+   the contact). Verify fleet is within 500m of contact.
+
+8. test_escort_holds_when_contact_removed:
+   Escort active → remove contact → run 100 steps → verify fleet holds
+   position (doesn't crash or error).
+
+9. test_aerial_recon_drone_sweeps:
+   Dispatch AERIAL_RECON to (1000, 1000). Verify drone has SWEEP pattern.
+   Verify drone coordinator was given a large area (corners ~500m from center).
+   Verify surface vessels have waypoints near (but south of) recon area.
+
+10. test_aerial_recon_surface_loiters:
+    Dispatch AERIAL_RECON. Run until surface vessels arrive. Verify they
+    enter LOITER orbit (not IDLE) — they're providing security.
+
+11. test_intercept_unchanged:
+    Run existing intercept tests. Verify no regressions.
+
+12. test_mission_type_in_fleet_state:
+    Dispatch each mission type. Verify active_mission field in
+    get_fleet_state() matches.
 
 Run: .venv/bin/python -m pytest tests/ -v
 
@@ -1149,19 +1949,42 @@ DELIVERABLES
 ────────────────────────────────────────────────────────────────────
 
 1. fleet_manager.py — mission-specific logic in dispatch_command() and step()
-2. Patrol loops, search zigzags, loiter orbits, escort follows, recon sweeps
-3. 6 new tests
-4. Full test suite — no regressions
-5. Commit when done
+2. Patrol loops, search zigzags, loiter orbits, escort tracking, recon sweeps
+3. Each behavior extracted into clean helper methods
+4. Dashboard mission type color coding
+5. 12 new tests
+6. Full test suite — no regressions
+7. Commit when done
 
 DEMO STORY:
-  Show all 5 non-intercept missions in quick succession:
-  "All vessels patrol sector in column" → visible loop pattern
-  "Search the area around 800 400" → zigzag sweep visible
-  "Loiter at 500 500" → small orbit pattern
-  "Escort the contact" → fleet shadows the moving target
-  "Aerial recon of sector north" → drone sweeps, vessels hold
-  Each mission looks DIFFERENT on the map. That's the point.
+  Rapid-fire mission showcase, each visually distinct on the map:
+
+  "All vessels patrol sector in column"
+  → Fleet loops through waypoints in column formation. Trail shows
+    repeating rectangular pattern. Drone orbits overhead.
+
+  "Search the area around 800 400"
+  → Fleet splits into parallel zigzag tracks. Lawnmower pattern visible
+    in trails. Drone sweeps the same area from above.
+
+  "Loiter at 500 500"
+  → Fleet arrives, then begins tight circular orbit. Dashboard shows
+    station-keeping pattern. Drone orbits above.
+
+  "Escort the contact" (with bogey-1 moving east)
+  → Fleet forms up around the contact and shadows it. Formation moves
+    WITH the contact. On the map: the red contact marker has a blue
+    escort screen around it, all moving together.
+
+  "Aerial recon of sector north"
+  → Drone streaks out to the recon area, begins wide sweep. Surface
+    vessels hold position nearby in loiter orbits. Domain delegation:
+    air does the work, surface provides security.
+
+  THEN hit intercept — predictive convergence on a new contact.
+
+  Six missions, six distinct patterns. The fleet looks INTELLIGENT.
+  That's the video that gets you hired.
 ```
 
 ---

@@ -1,0 +1,85 @@
+{
+  "pipeline_version": "2.0",
+  "last_updated": "2026-04-01",
+  "test_baseline": 152,
+  "audits": {
+    "9": {
+      "name": "Autonomous Threat Response",
+      "status": "done",
+      "files_changed": [
+        "src/fleet/threat_detector.py",
+        "tests/test_threat_detector.py",
+        "src/fleet/fleet_manager.py",
+        "src/api/ws.py",
+        "dashboard/src/App.jsx",
+        "dashboard/src/components/ContactPanel.jsx",
+        "dashboard/src/components/FleetMap.jsx",
+        "dashboard/src/components/MissionLog.jsx",
+        "dashboard/src/components/MissionStatus.jsx"
+      ],
+      "tests_added": 10,
+      "commit": "2502bab",
+      "blockers_resolved": []
+    },
+    "10": {
+      "name": "Comms-Denied Autonomy",
+      "status": "done",
+      "files_changed": [
+        "src/fleet/fleet_manager.py",
+        "src/api/routes.py",
+        "dashboard/src/components/MissionStatus.jsx",
+        "dashboard/src/App.jsx",
+        "tests/test_comms_denied.py"
+      ],
+      "tests_added": 12,
+      "commit": "41808ce",
+      "depends_on": ["9"],
+      "blockers_resolved": []
+    },
+    "11": {
+      "name": "Cross-Domain Kill Chain",
+      "status": "done",
+      "files_changed": [
+        "src/fleet/drone_sensor.py",
+        "src/fleet/fleet_manager.py",
+        "dashboard/src/components/FleetMap.jsx",
+        "dashboard/src/components/MissionStatus.jsx",
+        "tests/test_kill_chain.py"
+      ],
+      "tests_added": 12,
+      "commit": "412d7b6",
+      "depends_on": ["10"],
+      "blockers_resolved": []
+    },
+    "12": {
+      "name": "Decision Audit Trail",
+      "status": "done",
+      "files_changed": [
+        "src/fleet/decision_log.py",
+        "src/fleet/fleet_manager.py",
+        "src/api/routes.py",
+        "dashboard/src/components/MissionLog.jsx",
+        "tests/test_decision_log.py"
+      ],
+      "tests_added": 12,
+      "commit": "16fb530",
+      "depends_on": ["11"],
+      "blockers_resolved": []
+    },
+    "13": {
+      "name": "Mission-Specific Behaviors",
+      "status": "done",
+      "files_changed": [
+        "src/fleet/fleet_manager.py",
+        "dashboard/src/components/MissionStatus.jsx",
+        "tests/test_mission_behaviors.py",
+        "tests/test_fleet_manager.py",
+        "tests/test_fleet_commander.py"
+      ],
+      "tests_added": 12,
+      "commit": "2100d59",
+      "depends_on": ["9"],
+      "blockers_resolved": []
+    }
+  }
+}
