@@ -12,6 +12,8 @@ import ScenarioPanel from './components/ScenarioPanel'
 
 const MAX_TRAIL = 200
 
+const SIM_SPEEDS = [1, 2, 4, 8]
+
 export default function App() {
   const { fleetState, connected } = useWebSocket()
   const assets = fleetState?.assets || []
@@ -19,6 +21,20 @@ export default function App() {
   const trails = useRef({})
   const contactTrails = useRef({})
   const commsMode = fleetState?.autonomy?.comms_mode || 'full'
+  const [timeScale, setTimeScale] = useState(1)
+
+  const changeTimeScale = useCallback(async (scale) => {
+    try {
+      await fetch('/api/time-scale', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ scale }),
+      })
+      setTimeScale(scale)
+    } catch (e) {
+      console.error('Failed to set time scale:', e)
+    }
+  }, [])
 
   const toggleCommsMode = useCallback(async () => {
     const newMode = commsMode === 'full' ? 'denied' : 'full'
@@ -134,6 +150,28 @@ export default function App() {
               >
                 {commsMode === 'denied' ? 'DENIED' : 'FULL'}
               </button>
+            </div>
+          </div>
+
+          {/* Sim Speed Control */}
+          <div className="border border-slate-700 rounded p-2 bg-slate-900/50">
+            <div className="flex items-center justify-between">
+              <span className="text-xs text-slate-400">SIM SPEED</span>
+              <div className="flex gap-1">
+                {SIM_SPEEDS.map((s) => (
+                  <button
+                    key={s}
+                    onClick={() => changeTimeScale(s)}
+                    className={`px-2 py-0.5 text-xs font-bold rounded transition-colors ${
+                      timeScale === s
+                        ? 'bg-blue-600 text-white'
+                        : 'bg-slate-700 text-slate-400 hover:bg-slate-600'
+                    }`}
+                  >
+                    {s}x
+                  </button>
+                ))}
+              </div>
             </div>
           </div>
           <ScenarioPanel />

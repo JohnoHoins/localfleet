@@ -1,7 +1,8 @@
 """
 WebSocket handler — streams FleetState JSON at 4Hz.
 Each connected client gets state updates every 250ms.
-The simulation advances one tick per broadcast.
+Simulation is advanced by the background loop in server.py;
+this handler only reads and broadcasts state.
 State snapshots are logged every LOG_INTERVAL ticks (~5 seconds).
 """
 import asyncio
@@ -25,7 +26,6 @@ def create_ws_router() -> APIRouter:
 
         try:
             while True:
-                commander.step(DT)
                 state_dict = commander.get_state_dict()
                 await websocket.send_json(state_dict)
 

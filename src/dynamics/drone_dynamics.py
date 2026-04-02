@@ -28,6 +28,7 @@ class DroneAgent:
         self._orbit_angle = 0.0     # radians, for orbit pattern
         self._orbit_center: Optional[Waypoint] = None
         self._orbit_radius = 150.0  # meters
+        self._transit_to_orbit = False  # fly to center before orbiting
 
     def set_waypoints(self, waypoints: List[Waypoint],
                       pattern: Optional[DronePattern] = None):
@@ -38,6 +39,10 @@ class DroneAgent:
         if pattern == DronePattern.ORBIT and waypoints:
             self._orbit_center = waypoints[0]
             self._orbit_angle = 0.0
+            # Check if already near the orbit center — if not, transit first
+            dx = waypoints[0].x - self.x
+            dy = waypoints[0].y - self.y
+            self._transit_to_orbit = math.sqrt(dx * dx + dy * dy) > self._orbit_radius * 1.5
 
     def step(self, dt: float):
         if self.status not in (AssetStatus.EXECUTING, AssetStatus.RETURNING) or not self.waypoints:
@@ -49,6 +54,17 @@ class DroneAgent:
             self.altitude += math.copysign(min(5.0 * dt, abs(alt_diff)), alt_diff)
 
         if self.pattern == DronePattern.ORBIT and self._orbit_center:
+            if self._transit_to_orbit:
+                # Fly toward orbit center, then start orbiting on arrival
+                self._step_waypoint(dt)
+                dx = self._orbit_center.x - self.x
+                dy = self._orbit_center.y - self.y
+                if math.sqrt(dx * dx + dy * dy) < self._orbit_radius * 1.5:
+                    self._transit_to_orbit = False
+                    # Seed orbit angle from current position relative to center
+                    self._orbit_angle = math.atan2(self.y - self._orbit_center.y,
+                                                   self.x - self._orbit_center.x)
+                return
             self._step_orbit(dt)
         else:
             self._step_waypoint(dt)

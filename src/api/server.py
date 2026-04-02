@@ -1,7 +1,10 @@
 """
 FastAPI application — LocalFleet backend.
 CORS-enabled, mounts routes and WebSocket handler.
+Background sim loop runs at 4Hz regardless of WebSocket connections.
 """
+import asyncio
+from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING
 
 from fastapi import FastAPI
@@ -15,6 +18,29 @@ from src.api.ws import create_ws_router
 if TYPE_CHECKING:
     pass
 
+SIM_DT = 0.25  # 4Hz simulation tick
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Start background simulation loop on startup, cancel on shutdown."""
+    app.state.time_scale = 1  # 1x, 2x, 4x, 8x
+    task = asyncio.create_task(_sim_loop(app))
+    yield
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
+
+
+async def _sim_loop(app: FastAPI):
+    """Advance simulation at 4Hz, running time_scale sub-steps per tick."""
+    while True:
+        for _ in range(app.state.time_scale):
+            app.state.commander.step(SIM_DT)
+        await asyncio.sleep(SIM_DT)
+
 
 def create_app(
     commander: FleetCommander | None = None,
@@ -24,7 +50,7 @@ def create_app(
     logger = logger or MissionLogger()
     commander = commander or FleetCommander(logger=logger)
 
-    app = FastAPI(title="LocalFleet", version="1.0.0")
+    app = FastAPI(title="LocalFleet", version="1.0.0", lifespan=lifespan)
 
     app.add_middleware(
         CORSMiddleware,

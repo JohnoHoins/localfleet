@@ -8,6 +8,7 @@ POST /api/voice-command — send audio, get transcription + command
 GET  /api/logs          — retrieve mission log events
 GET  /api/logs/summary  — mission log summary
 """
+import asyncio
 import os
 import tempfile
 import time
@@ -21,6 +22,7 @@ from src.schemas import (
     CommandRequest, CommandResponse, FleetState, GpsDeniedRequest,
     Contact, DomainType, FleetCommand,
 )
+from src.fleet.fleet_manager import FleetManager
 from src.voice.whisper_local import transcribe_audio
 
 
@@ -33,7 +35,7 @@ def create_router() -> APIRouter:
         commander = request.app.state.commander
         if commander.fleet_manager.comms_mode == "denied":
             return CommandResponse(success=False, error="COMMS DENIED — fleet operating autonomously")
-        return commander.handle_command(req)
+        return await asyncio.to_thread(commander.handle_command, req)
 
     @router.get("/assets", response_model=FleetState)
     async def get_assets(request: Request):
@@ -78,6 +80,28 @@ def create_router() -> APIRouter:
             "denied_duration": elapsed,
         }
 
+    @router.post("/reset")
+    async def post_reset(request: Request):
+        """Reset fleet to initial state — all assets at home, no mission, no contacts."""
+        commander = request.app.state.commander
+        commander.fleet_manager = FleetManager()
+        commander.last_command = None
+        return {"success": True, "message": "Fleet reset to initial state"}
+
+    class TimeScaleRequest(BaseModel):
+        scale: int  # 1, 2, 4, or 8
+
+    @router.post("/time-scale")
+    async def post_time_scale(req: TimeScaleRequest, request: Request):
+        """Set simulation speed multiplier (sub-steps per tick)."""
+        scale = max(1, min(8, req.scale))
+        request.app.state.time_scale = scale
+        return {"time_scale": scale}
+
+    @router.get("/time-scale")
+    async def get_time_scale(request: Request):
+        return {"time_scale": getattr(request.app.state, "time_scale", 1)}
+
     @router.post("/return-to-base")
     async def post_return_to_base(request: Request):
         """Trigger comms-lost return-to-base for all assets."""
@@ -101,7 +125,7 @@ def create_router() -> APIRouter:
             text = transcribe_audio(tmp_path)
             commander = request.app.state.commander
             req = CommandRequest(text=text, source="voice")
-            return commander.handle_command(req)
+            return await asyncio.to_thread(commander.handle_command, req)
         except Exception as e:
             return CommandResponse(success=False, error=str(e))
         finally:

@@ -38,6 +38,13 @@ CRITICAL RULES:
 7. Pick the best mission_type: patrol, search, escort, loiter, aerial_recon, intercept.
    - Use "intercept" when the user wants the fleet to converge on a target/contact position.
 8. If no formation specified, use "independent".
+9. comms_lost_behavior sets standing orders for comms loss. Values: "return_to_base" (default), "hold_position", "continue_mission". Only set if the user explicitly mentions standing orders or comms-loss behavior.
+
+STANDING ORDERS EXAMPLES:
+  "patrol to 3000 0 in column with hold position standing orders" → comms_lost_behavior: "hold_position"
+  "patrol to 2000 0 with continue mission standing orders" → comms_lost_behavior: "continue_mission"
+  Phrases: "hold position standing orders", "continue mission on comms loss", "return to base standing orders"
+  If the user says nothing about standing orders → comms_lost_behavior: "return_to_base" (the default).
 
 DO NOT:
 - Create asset IDs that are not in the roster above. There is no "delta", "eagle-2", or "drone-1".
