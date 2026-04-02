@@ -127,7 +127,7 @@ def test_denied_mode_drift_grows_over_time():
 
 
 def test_gps_restore_resets_dr_state():
-    """Switching from DENIED back to FULL should reset DR state."""
+    """Switching from DENIED back to FULL should reset DR state after blend."""
     fm = FleetManager()
     cmd = FleetCommand(
         mission_type=MissionType.PATROL,
@@ -153,16 +153,18 @@ def test_gps_restore_resets_dr_state():
     assert fm.dr_states["alpha"].drift_error > 0.0
     assert fm.dr_states["alpha"].time_denied > 0.0
 
-    # Restore GPS
+    # Restore GPS — blend starts
     fm.set_gps_mode(GpsMode.FULL)
+    assert fm._gps_blending is True
 
-    assert fm.dr_states["alpha"].drift_error == 0.0, "Drift should reset on GPS restore"
-    assert fm.dr_states["alpha"].time_denied == 0.0, "Time denied should reset"
+    # Run enough steps to complete the 5-second blend (20 steps at dt=0.25)
+    for _ in range(25):
+        fm.step(dt)
 
-    true_x = fm.vessels["alpha"]["state"][0]
-    true_y = fm.vessels["alpha"]["state"][1]
-    assert abs(fm.dr_states["alpha"].estimated_x - true_x) < 0.01
-    assert abs(fm.dr_states["alpha"].estimated_y - true_y) < 0.01
+    # After blend completes, DR state should be reset
+    assert fm._gps_blending is False
+    assert fm.dr_states["alpha"].drift_error == 0.0, "Drift should reset after blend"
+    assert fm.dr_states["alpha"].time_denied == 0.0, "Time denied should reset after blend"
 
 
 def test_degraded_mode_adds_nav_noise():
@@ -220,6 +222,54 @@ def test_land_avoidance_uses_true_position():
     assert fm.vessels["alpha"]["state"] is not None
     assert fm.vessels["alpha"]["state"][0] != 5000.0 or fm.vessels["alpha"]["state"][1] != -3000.0
     assert fm.dr_states["alpha"].time_denied > 0.0
+
+
+def test_gps_restore_smooth_blend():
+    """GPS restore should blend nav position smoothly, not snap."""
+    fm = FleetManager()
+    cmd = FleetCommand(
+        mission_type=MissionType.PATROL,
+        assets=[
+            AssetCommand(
+                asset_id="alpha",
+                domain=DomainType.SURFACE,
+                waypoints=[Waypoint(x=5000.0, y=0.0)],
+                speed=5.0,
+            ),
+        ],
+    )
+    fm.dispatch_command(cmd)
+    dt = 0.25
+    for _ in range(20):
+        fm.step(dt)
+
+    fm.set_gps_mode(GpsMode.DENIED)
+    for _ in range(100):
+        fm.step(dt)
+
+    # Record DR position before restore
+    dr_x = fm.dr_states["alpha"].estimated_x
+    dr_y = fm.dr_states["alpha"].estimated_y
+    true_x = float(fm.vessels["alpha"]["state"][0])
+    true_y = float(fm.vessels["alpha"]["state"][1])
+    pre_gap = math.sqrt((dr_x - true_x) ** 2 + (dr_y - true_y) ** 2)
+    assert pre_gap > 1.0, "Need some DR drift to test blending"
+
+    # Restore GPS — blend starts
+    fm.set_gps_mode(GpsMode.FULL)
+    assert fm._gps_blending is True
+    assert fm._gps_blend_alpha == 0.0
+
+    # After 1 tick, blend alpha should be small (dt/5 = 0.05)
+    fm.step(dt)
+    assert fm._gps_blend_alpha < 0.1, "Blend should start gradual"
+    assert fm._gps_blending is True
+
+    # After 5+ seconds (20+ ticks), blend should complete
+    for _ in range(25):
+        fm.step(dt)
+    assert fm._gps_blending is False, "Blend should complete after 5s"
+    assert fm._gps_blend_alpha == 1.0
 
 
 if __name__ == "__main__":

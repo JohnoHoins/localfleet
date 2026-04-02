@@ -78,7 +78,10 @@ cd dashboard && pnpm dev
 - **Land avoidance**: `land_check.py` has simplified Cape Cod polygon (~500m accuracy). `land_repulsion_heading()` is called in `fleet_manager.py step()` after `planning()` and before the PID controller. Returns heading correction in radians. Extensible via `LAND_POLYGONS` list.
 - **Contacts**: `fleet_manager.py` has `contacts` dict, `spawn_contact()`/`remove_contact()` methods, straight-line motion in `step()`, and contacts included in `FleetState`. REST endpoints at `/api/contacts`.
 - **Intercept mission**: One-shot waypoint dispatch to target position. Drone gets TRACK pattern. No continuous pursuit — fleet navigates to where the target IS at dispatch time.
-- **GPS-denied dead reckoning**: `gps_denied.py` has `DeadReckoningState` + `dead_reckon_step()`. In DENIED mode, navigation uses DR estimated position (drifts ~0.5%/step). Physics and land avoidance always use true position. GpsMode enum: FULL, DEGRADED, DENIED.
+- **GPS-denied dead reckoning**: `gps_denied.py` has `DeadReckoningState` + `dead_reckon_step()`. In DENIED mode, navigation uses DR estimated position (drifts ~0.5%/step). Physics and land avoidance always use true position. GpsMode enum: FULL, DEGRADED, DENIED. GPS restore uses 5-second smooth blend (`_gps_blend_alpha`) from DR to true position — no snap.
+- **Formation tracking**: `_update_formation_positions()` in `fleet_manager.py` continuously updates follower waypoints relative to leader's current position/heading (~1s cadence). Skips INTERCEPT missions. Formation offsets still computed by `formations.py`.
+- **Comms-denied standing orders**: `_handle_comms_denied()` uses one-shot guard (`_comms_fallback_executed`). `hold_position` and `return_to_base` fire regardless of active mission state; `continue_mission` only triggers fallback when fleet is idle. Guard resets in `set_comms_mode()`.
+- **Loiter orbit**: Octagon waypoints use compensated radius `150 / cos(pi/8)` ≈ 162m so inscribed radius ≈ 150m target.
 
 ## Reference Files
 Context dumps used during project creation are in `docs/reference/`:

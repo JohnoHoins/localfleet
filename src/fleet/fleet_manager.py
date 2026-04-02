@@ -122,6 +122,13 @@ class FleetManager:
         # Escort tracking
         self._escort_target_id: str | None = None
 
+        # Comms-denied fallback one-shot guard
+        self._comms_fallback_executed: bool = False
+
+        # GPS blend state for smooth restore
+        self._gps_blend_alpha: float = 1.0
+        self._gps_blending: bool = False
+
         # Decision audit trail
         self.decision_log = DecisionLog()
 
@@ -277,6 +284,17 @@ class FleetManager:
                 v["_loiter_orbit"] = False  # reset on new command
 
             elif ac.domain == DomainType.AIR and ac.asset_id == self.drone.asset_id:
+                # For air assets with SWEEP pattern and only 1 waypoint,
+                # generate a default sweep area around the center point
+                if (ac.domain == DomainType.AIR
+                        and ac.drone_pattern == DronePattern.SWEEP
+                        and len(ac.waypoints) == 1):
+                    center = ac.waypoints[0]
+                    ac.waypoints = [
+                        Waypoint(x=center.x - 500, y=center.y - 500),
+                        Waypoint(x=center.x + 500, y=center.y + 500),
+                    ]
+
                 # Use DroneCoordinator for pattern-based commands when
                 # enough waypoints are provided for the pattern type
                 use_coordinator = (
@@ -384,6 +402,49 @@ class FleetManager:
                 wpts_x[-1] = pred_x * METERS_TO_NMI
                 wpts_y[-1] = pred_y * METERS_TO_NMI
 
+    def _update_formation_positions(self):
+        """Continuously update follower waypoints to maintain formation."""
+        if self.formation == FormationType.INDEPENDENT:
+            return
+        if self.active_mission is None:
+            return
+        # Don't override intercept waypoints — vessels converge on target
+        if self.active_mission == MissionType.INTERCEPT:
+            return
+
+        vessel_ids = list(self.vessels.keys())
+        leader_id = vessel_ids[0]
+        leader_v = self.vessels[leader_id]
+
+        if leader_v["status"] != AssetStatus.EXECUTING:
+            return
+
+        leader_state = leader_v["state"]
+        leader_x = float(leader_state[0])
+        leader_y = float(leader_state[1])
+        leader_heading_deg = (90 - math.degrees(float(leader_state[2]))) % 360
+
+        cmd_spacing = 200.0
+        if self.last_command:
+            cmd_spacing = self.last_command.spacing_meters
+
+        positions = apply_formation(
+            leader_x, leader_y, leader_heading_deg,
+            vessel_ids, self.formation, cmd_spacing,
+        )
+
+        for vid in vessel_ids[1:]:  # Skip leader
+            v = self.vessels[vid]
+            if v["status"] != AssetStatus.EXECUTING:
+                continue
+            wpts_x = v["waypoints_x"]
+            wpts_y = v["waypoints_y"]
+            if len(wpts_x) < 2:
+                continue
+            fp = positions[vid]
+            wpts_x[-1] = fp.x * METERS_TO_NMI
+            wpts_y[-1] = fp.y * METERS_TO_NMI
+
     def _update_escort_positions(self):
         """Update waypoints to follow escort target contact."""
         if self.active_mission != MissionType.ESCORT:
@@ -409,6 +470,10 @@ class FleetManager:
                 and self._threat_check_counter == 0):
             self._update_escort_positions()
 
+        # Formation tracking — update every threat check interval
+        if self._threat_check_counter == 0:
+            self._update_formation_positions()
+
         # Surface vessels
         for vid, v in self.vessels.items():
             state = v["state"]
@@ -421,6 +486,13 @@ class FleetManager:
                 nav_x, nav_y = dr.estimated_x, dr.estimated_y
             elif self.gps_mode == GpsMode.DEGRADED:
                 nav_x, nav_y, _ = degrade_position(state[0], state[1], self.noise_meters)
+
+            # Smooth blend from DR estimate to true position after GPS restore
+            if self._gps_blending and self.gps_mode != GpsMode.DENIED:
+                dr = self.dr_states[vid]
+                alpha = self._gps_blend_alpha
+                nav_x = dr.estimated_x * (1 - alpha) + float(state[0]) * alpha
+                nav_y = dr.estimated_y * (1 - alpha) + float(state[1]) * alpha
 
             x_nmi = nav_x * METERS_TO_NMI
             y_nmi = nav_y * METERS_TO_NMI
@@ -448,10 +520,12 @@ class FleetManager:
                             ly = wpts_y[-1] / METERS_TO_NMI
                             orbit_x = [v["state"][0] * METERS_TO_NMI]
                             orbit_y = [v["state"][1] * METERS_TO_NMI]
+                            # Compensate for octagon inscribed radius
+                            orbit_radius = 150.0 / math.cos(math.pi / 8)
                             for j in range(8):
                                 angle = j * (2 * math.pi / 8)
-                                orbit_x.append((lx + 150 * math.cos(angle)) * METERS_TO_NMI)
-                                orbit_y.append((ly + 150 * math.sin(angle)) * METERS_TO_NMI)
+                                orbit_x.append((lx + orbit_radius * math.cos(angle)) * METERS_TO_NMI)
+                                orbit_y.append((ly + orbit_radius * math.sin(angle)) * METERS_TO_NMI)
                             v["waypoints_x"] = orbit_x
                             v["waypoints_y"] = orbit_y
                             v["i_wpt"] = 1
@@ -500,6 +574,19 @@ class FleetManager:
 
             x_dot = vessel_dynamics(state, inputs)
             v["state"] = integration(state, x_dot, dt)
+
+        # Advance GPS blend alpha (once per step, not per vessel)
+        if self._gps_blending:
+            self._gps_blend_alpha += dt / 5.0  # 5-second blend
+            if self._gps_blend_alpha >= 1.0:
+                self._gps_blend_alpha = 1.0
+                self._gps_blending = False
+                # Finalize: reset DR states to true positions
+                for vid, v in self.vessels.items():
+                    s = v["state"]
+                    self.dr_states[vid] = DeadReckoningState(
+                        estimated_x=float(s[0]), estimated_y=float(s[1]),
+                    )
 
         # Contacts — straight-line motion
         for contact in self.contacts.values():
@@ -828,12 +915,9 @@ class FleetManager:
                     estimated_x=float(s[0]), estimated_y=float(s[1]),
                 )
         elif mode != GpsMode.DENIED and self.gps_mode == GpsMode.DENIED:
-            # Leaving DENIED mode — reset DR states
-            for vid, v in self.vessels.items():
-                s = v["state"]
-                self.dr_states[vid] = DeadReckoningState(
-                    estimated_x=float(s[0]), estimated_y=float(s[1]),
-                )
+            # Leaving DENIED mode — start smooth blend from DR to true position
+            self._gps_blending = True
+            self._gps_blend_alpha = 0.0
         self.gps_mode = mode
         self.noise_meters = noise_meters
 
@@ -845,6 +929,7 @@ class FleetManager:
         if mode == "denied" and self.comms_mode != "denied":
             self.comms_denied_since = time.time()
             self.autonomous_actions = []
+            self._comms_fallback_executed = False
             if not self._has_active_mission():
                 self._execute_comms_fallback("idle_on_denial")
         elif mode == "full" and self.comms_mode == "denied":
@@ -865,9 +950,16 @@ class FleetManager:
             return
         elapsed = time.time() - self.comms_denied_since
 
-        # Level 2: idle fleet executes standing orders
-        if not self._has_active_mission():
-            self._execute_comms_fallback("idle_during_denial")
+        # Standing orders — fire once per denial episode
+        if not self._comms_fallback_executed:
+            behavior = self.comms_lost_behavior
+            if behavior == "continue_mission":
+                if not self._has_active_mission():
+                    self._execute_comms_fallback("idle_during_denial")
+            else:
+                # hold_position and return_to_base ALWAYS execute
+                self._execute_comms_fallback("comms_denied_standing_order")
+            self._comms_fallback_executed = True
 
         # Level 3: auto-engage after escalation delay
         if (self.intercept_recommended
@@ -906,6 +998,10 @@ class FleetManager:
         """Fully autonomous intercept — no human in the loop."""
         target_id = self.recommended_target
         if not target_id or target_id not in self.contacts:
+            return
+        # Guard: don't re-engage if already intercepting this target
+        if (self.active_mission == MissionType.INTERCEPT
+                and self.kill_chain_target == target_id):
             return
         contact = self.contacts[target_id]
         surface_cmds = []

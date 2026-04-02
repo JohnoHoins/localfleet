@@ -76,6 +76,34 @@ def test_altitude_transition():
     print("Altitude transition OK")
 
 
+def test_sweep_single_waypoint_no_freeze():
+    """A SWEEP with 1 waypoint should not freeze the drone."""
+    agent = DroneAgent("eagle-1", x=0, y=0)
+    agent.set_waypoints([Waypoint(x=100, y=100)], pattern=DronePattern.SWEEP)
+    for _ in range(200):
+        agent.step(0.25)
+    assert agent.status == AssetStatus.EXECUTING
+
+
+def test_sweep_continues_moving():
+    """Drone should never be stuck at same position for consecutive samples."""
+    import math
+    agent = DroneAgent("eagle-1", x=0, y=0)
+    wps = [Waypoint(x=0, y=0), Waypoint(x=200, y=0),
+           Waypoint(x=200, y=200), Waypoint(x=0, y=200)]
+    agent.set_waypoints(wps, pattern=DronePattern.SWEEP)
+    positions = []
+    for i in range(500):
+        agent.step(0.25)
+        if i % 50 == 0:
+            positions.append((agent.x, agent.y))
+    # No two consecutive recorded positions should be identical
+    for i in range(1, len(positions)):
+        p0, p1 = positions[i - 1], positions[i]
+        dist = math.sqrt((p1[0] - p0[0]) ** 2 + (p1[1] - p0[1]) ** 2)
+        assert dist > 0.1, f"Drone stuck between sample {i-1} and {i}"
+
+
 if __name__ == "__main__":
     test_import()
     test_waypoint_following()
@@ -83,4 +111,6 @@ if __name__ == "__main__":
     test_sweep_loops()
     test_get_state()
     test_altitude_transition()
+    test_sweep_single_waypoint_no_freeze()
+    test_sweep_continues_moving()
     print("\nAll drone tests passed!")

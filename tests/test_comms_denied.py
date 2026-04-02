@@ -44,6 +44,7 @@ def test_comms_denied_fleet_continues_mission():
     cmd = _make_patrol_command()
     fm.dispatch_command(cmd)
     assert any(v["status"] == AssetStatus.EXECUTING for v in fm.vessels.values())
+    fm.comms_lost_behavior = "continue_mission"
     fm.set_comms_mode("denied")
     for _ in range(100):
         fm.step(0.25)
@@ -154,6 +155,75 @@ def test_comms_denied_autonomous_actions_logged():
         fm.step(0.25)
     assert len(fm.autonomous_actions) > 0
     assert "AUTO-RTB" in fm.autonomous_actions[0]
+
+
+def test_comms_hold_stops_active_mission():
+    fm = _make_fleet_manager()
+    cmd = _make_patrol_command()
+    fm.dispatch_command(cmd)
+    for _ in range(20):
+        fm.step(0.25)
+    assert any(v["status"] == AssetStatus.EXECUTING for v in fm.vessels.values())
+    fm.comms_lost_behavior = "hold_position"
+    fm.set_comms_mode("denied")
+    for _ in range(20):
+        fm.step(0.25)
+    # All vessels should be idle (held)
+    assert all(v["status"] == AssetStatus.IDLE for v in fm.vessels.values())
+
+
+def test_comms_rtb_during_active_mission():
+    fm = _make_fleet_manager()
+    cmd = _make_patrol_command()
+    fm.dispatch_command(cmd)
+    # Move vessels away from home
+    for vid, v in fm.vessels.items():
+        v["state"][0] = 3000.0
+        v["state"][1] = 3000.0
+    for _ in range(20):
+        fm.step(0.25)
+    fm.comms_lost_behavior = "return_to_base"
+    fm.set_comms_mode("denied")
+    for _ in range(20):
+        fm.step(0.25)
+    assert any(v["status"] == AssetStatus.RETURNING for v in fm.vessels.values())
+
+
+def test_comms_continue_keeps_executing():
+    fm = _make_fleet_manager()
+    cmd = _make_patrol_command()
+    fm.dispatch_command(cmd)
+    fm.comms_lost_behavior = "continue_mission"
+    fm.set_comms_mode("denied")
+    for _ in range(100):
+        fm.step(0.25)
+    assert any(v["status"] == AssetStatus.EXECUTING for v in fm.vessels.values())
+
+
+def test_comms_fallback_fires_once():
+    fm = _make_fleet_manager()
+    cmd = _make_patrol_command()
+    fm.dispatch_command(cmd)
+    fm.comms_lost_behavior = "hold_position"
+    fm.set_comms_mode("denied")
+    for _ in range(100):
+        fm.step(0.25)
+    hold_entries = [a for a in fm.autonomous_actions if "AUTO-HOLD" in a]
+    assert len(hold_entries) == 1
+
+
+def test_auto_engage_fires_once():
+    fm = _make_fleet_manager()
+    fm.spawn_contact("bogey-1", 1500, 0, math.pi, 1.0)
+    fm.set_comms_mode("denied")
+    fm.comms_denied_since = time.time() - 70  # past 60s timeout
+    fm._check_threats()
+    assert fm.intercept_recommended
+    # Call handle_comms_denied 10 times
+    for _ in range(10):
+        fm._handle_comms_denied()
+    intercept_entries = [a for a in fm.autonomous_actions if "AUTO-INTERCEPT" in a]
+    assert len(intercept_entries) == 1
 
 
 def test_comms_denied_stores_last_command():

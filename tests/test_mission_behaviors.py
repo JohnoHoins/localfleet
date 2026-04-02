@@ -154,6 +154,102 @@ def test_intercept_unchanged():
     assert AssetStatus.IDLE in statuses
 
 
+def test_search_drone_gets_sweep_area():
+    """SEARCH with single waypoint and drone_pattern=SWEEP should generate area."""
+    fm = _make_fm()
+    cmd = FleetCommand(
+        mission_type=MissionType.SEARCH,
+        assets=[
+            AssetCommand(asset_id="alpha", domain=DomainType.SURFACE,
+                        waypoints=[Waypoint(x=1000, y=1000)], speed=5.0),
+            AssetCommand(asset_id="eagle-1", domain=DomainType.AIR,
+                        waypoints=[Waypoint(x=1000, y=1000)],
+                        speed=15.0, altitude=100.0, drone_pattern=DronePattern.SWEEP),
+        ],
+    )
+    fm.dispatch_command(cmd)
+    assert fm.drone_coordinator._current_pattern == DronePattern.SWEEP
+    assert len(fm.drone.waypoints) > 2
+
+
+def test_echelon_formation_spacing():
+    """Echelon formation spacing should converge toward target during transit."""
+    fm = _make_fm()
+    cmd = FleetCommand(
+        mission_type=MissionType.PATROL,
+        assets=[
+            AssetCommand(asset_id="alpha", domain=DomainType.SURFACE,
+                        waypoints=[Waypoint(x=2000, y=1000)], speed=5.0),
+            AssetCommand(asset_id="bravo", domain=DomainType.SURFACE,
+                        waypoints=[Waypoint(x=2000, y=1000)], speed=5.0),
+            AssetCommand(asset_id="charlie", domain=DomainType.SURFACE,
+                        waypoints=[Waypoint(x=2000, y=1000)], speed=5.0),
+        ],
+        formation=FormationType.ECHELON,
+        spacing_meters=200,
+    )
+    fm.dispatch_command(cmd)
+    for _ in range(400):
+        fm.step(0.25)
+    # Compute distances
+    states = {vid: v["state"] for vid, v in fm.vessels.items()}
+    ab = math.sqrt((states["alpha"][0] - states["bravo"][0]) ** 2 +
+                   (states["alpha"][1] - states["bravo"][1]) ** 2)
+    bc = math.sqrt((states["bravo"][0] - states["charlie"][0]) ** 2 +
+                   (states["bravo"][1] - states["charlie"][1]) ** 2)
+    target = 200 * math.sqrt(2)  # echelon diagonal ≈ 283m
+    assert ab < target * 1.5, f"AB spacing {ab:.0f}m too large"
+    assert bc < target * 1.5, f"BC spacing {bc:.0f}m too large"
+
+
+def test_column_formation_still_works():
+    fm = _make_fm()
+    cmd = FleetCommand(
+        mission_type=MissionType.PATROL,
+        assets=[
+            AssetCommand(asset_id="alpha", domain=DomainType.SURFACE,
+                        waypoints=[Waypoint(x=2000, y=0)], speed=5.0),
+            AssetCommand(asset_id="bravo", domain=DomainType.SURFACE,
+                        waypoints=[Waypoint(x=2000, y=0)], speed=5.0),
+            AssetCommand(asset_id="charlie", domain=DomainType.SURFACE,
+                        waypoints=[Waypoint(x=2000, y=0)], speed=5.0),
+        ],
+        formation=FormationType.COLUMN,
+        spacing_meters=200,
+    )
+    fm.dispatch_command(cmd)
+    for _ in range(400):
+        fm.step(0.25)
+    states = {vid: v["state"] for vid, v in fm.vessels.items()}
+    ab = math.sqrt((states["alpha"][0] - states["bravo"][0]) ** 2 +
+                   (states["alpha"][1] - states["bravo"][1]) ** 2)
+    assert ab < 200 * 2.0, f"AB spacing {ab:.0f}m too large for column"
+
+
+def test_formation_updates_continuously():
+    """Bravo's last waypoint should change as alpha moves (continuous update)."""
+    fm = _make_fm()
+    cmd = FleetCommand(
+        mission_type=MissionType.PATROL,
+        assets=[
+            AssetCommand(asset_id="alpha", domain=DomainType.SURFACE,
+                        waypoints=[Waypoint(x=3000, y=0)], speed=5.0),
+            AssetCommand(asset_id="bravo", domain=DomainType.SURFACE,
+                        waypoints=[Waypoint(x=3000, y=0)], speed=5.0),
+            AssetCommand(asset_id="charlie", domain=DomainType.SURFACE,
+                        waypoints=[Waypoint(x=3000, y=0)], speed=5.0),
+        ],
+        formation=FormationType.ECHELON,
+        spacing_meters=200,
+    )
+    fm.dispatch_command(cmd)
+    bravo_wp0 = fm.vessels["bravo"]["waypoints_x"][-1]
+    for _ in range(200):
+        fm.step(0.25)
+    bravo_wp1 = fm.vessels["bravo"]["waypoints_x"][-1]
+    assert bravo_wp0 != bravo_wp1, "Bravo's last waypoint should update continuously"
+
+
 def test_mission_type_in_fleet_state():
     fm = _make_fm()
     cmd = _make_cmd(MissionType.PATROL, waypoint_x=1000, waypoint_y=1000)

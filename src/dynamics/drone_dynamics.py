@@ -65,7 +65,13 @@ class DroneAgent:
                     self.current_wp_index = 0  # loop sweep
                 else:
                     self.status = AssetStatus.IDLE
-            return
+                    return
+            # Don't return — fall through to move toward next waypoint
+            wp = self.waypoints[self.current_wp_index]
+            dx, dy = wp.x - self.x, wp.y - self.y
+            dist = math.sqrt(dx * dx + dy * dy)
+            if dist < 0.1:
+                return  # Already at next waypoint too
 
         self.heading = math.degrees(math.atan2(dx, dy)) % 360
         move = min(self.speed * dt, dist)
