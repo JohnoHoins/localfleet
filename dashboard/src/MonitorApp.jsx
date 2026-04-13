@@ -62,9 +62,13 @@ function CommandPanel({ command }) {
       <div className="row">
         <span className="label">Method:</span>
         <Flash value={command.parse_method}>
-          <span style={{ color: '#f59e0b', fontWeight: 'bold' }}>LLM</span>
+          <span style={{ color: command.parse_method === 'direct' ? '#06b6d4' : '#f59e0b', fontWeight: 'bold' }}>
+            {command.parse_method === 'direct' ? 'DIRECT' : 'LLM'}
+          </span>
         </Flash>
-        <span className="dim" style={{ marginLeft: 8 }}>({timeStr})</span>
+        {command.parse_method !== 'direct' && (
+          <span className="dim" style={{ marginLeft: 8 }}>({timeStr})</span>
+        )}
       </div>
       <div className="row">
         <span className="label">Mission:</span>

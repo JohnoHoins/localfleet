@@ -32,6 +32,7 @@ SAT_AMP = 20  # actuator saturation amplitude
 REPLAN_INTERVAL_STEPS = 40  # 10 seconds at 4Hz
 REPLAN_SHIFT_THRESHOLD = 100.0  # meters — only update if intercept drifted this much
 THREAT_CHECK_INTERVAL = 4  # Check threats every 4 steps (~1 second at 4Hz)
+ESCALATION_STEPS = 240     # 60 sim-seconds at 4Hz before auto-engage
 
 
 def compute_intercept_point(fleet_x: float, fleet_y: float, fleet_speed: float,
@@ -124,6 +125,7 @@ class FleetManager:
 
         # Comms-denied fallback one-shot guard
         self._comms_fallback_executed: bool = False
+        self._comms_denied_steps: int = 0
 
         # GPS blend state for smooth restore
         self._gps_blend_alpha: float = 1.0
@@ -131,6 +133,10 @@ class FleetManager:
 
         # Decision audit trail
         self.decision_log = DecisionLog()
+
+        # De-duplication guards for decision log (prevent spam)
+        self._last_logged_threat_level: Dict[str, str] = {}
+        self._last_logged_kc_phase: str | None = None
 
     # ------------------------------------------------------------------
     # Contact (target) management
@@ -148,6 +154,7 @@ class FleetManager:
 
     def remove_contact(self, contact_id: str) -> bool:
         """Remove a contact by ID. Returns True if it existed."""
+        self._last_logged_threat_level.pop(contact_id, None)
         return self.contacts.pop(contact_id, None) is not None
 
     # ------------------------------------------------------------------
@@ -537,6 +544,30 @@ class FleetManager:
                             # Already orbiting — loop
                             v["i_wpt"] = 1
                             i_wpt = 1
+                    elif self.active_mission == MissionType.INTERCEPT and self.contacts:
+                        # Contact still alive — continuous pursuit
+                        target = min(self.contacts.values(),
+                                     key=lambda c: (c.x - state[0])**2 + (c.y - state[1])**2)
+                        dist = math.sqrt((target.x - state[0])**2 + (target.y - state[1])**2)
+                        if dist > 50.0:
+                            # Place waypoint 200m beyond contact to prevent
+                            # waypoint_selection from immediately marking it reached
+                            bearing = math.atan2(target.y - state[1], target.x - state[0])
+                            lead_x = target.x + 200.0 * math.cos(bearing)
+                            lead_y = target.y + 200.0 * math.sin(bearing)
+                        else:
+                            # Very close — aim at contact directly
+                            lead_x = target.x
+                            lead_y = target.y
+                        v["desired_speed"] = 8.0  # pursuit speed
+                        wpts_x_new = [state[0] * METERS_TO_NMI, lead_x * METERS_TO_NMI]
+                        wpts_y_new = [state[1] * METERS_TO_NMI, lead_y * METERS_TO_NMI]
+                        v["waypoints_x"] = wpts_x_new
+                        v["waypoints_y"] = wpts_y_new
+                        v["i_wpt"] = 1
+                        i_wpt = 1
+                        wpts_x = wpts_x_new
+                        wpts_y = wpts_y_new
                     else:
                         # Default: go IDLE
                         v["status"] = AssetStatus.IDLE
@@ -710,12 +741,16 @@ class FleetManager:
                         break
 
         if self.kill_chain_phase != old_phase and self.kill_chain_phase is not None:
-            self.decision_log.log(
-                "kill_chain_transition",
-                f"Kill chain: {old_phase or 'NONE'} → {self.kill_chain_phase}",
-                f"Target: {self.kill_chain_target}. "
-                f"Drone {'locked' if self.targeting_data and self.targeting_data.locked else 'searching'}.",
-            )
+            # Only log if this is a genuinely new transition (not a repeated one)
+            transition_key = f"{old_phase}→{self.kill_chain_phase}"
+            if transition_key != self._last_logged_kc_phase:
+                self._last_logged_kc_phase = transition_key
+                self.decision_log.log(
+                    "kill_chain_transition",
+                    f"Kill chain: {old_phase or 'NONE'} → {self.kill_chain_phase}",
+                    f"Target: {self.kill_chain_target}. "
+                    f"Drone {'locked' if self.targeting_data and self.targeting_data.locked else 'searching'}.",
+                )
 
     # ------------------------------------------------------------------
     # Threat detection & auto-response
@@ -740,12 +775,16 @@ class FleetManager:
                 self.recommended_target = ta.contact_id
 
             if ta.threat_level in ("warning", "critical"):
-                self.decision_log.log(
-                    "threat_assessment",
-                    f"{ta.contact_id}: {ta.threat_level.upper()} {ta.distance:.0f}m",
-                    ta.reason,
-                    confidence=1.0 - (ta.distance / 8000.0),
-                )
+                # Only log when threat level CHANGES for this contact
+                prev_level = self._last_logged_threat_level.get(ta.contact_id)
+                if prev_level != ta.threat_level:
+                    self._last_logged_threat_level[ta.contact_id] = ta.threat_level
+                    self.decision_log.log(
+                        "threat_assessment",
+                        f"{ta.contact_id}: {ta.threat_level.upper()} {ta.distance:.0f}m",
+                        ta.reason,
+                        confidence=1.0 - (ta.distance / 8000.0),
+                    )
 
             if ta.threat_level in ("warning", "critical") and not active_intercept:
                 # Auto-retask drone to TRACK if idle or not already tracking
@@ -930,6 +969,7 @@ class FleetManager:
             self.comms_denied_since = time.time()
             self.autonomous_actions = []
             self._comms_fallback_executed = False
+            self._comms_denied_steps = 0
             if not self._has_active_mission():
                 self._execute_comms_fallback("idle_on_denial")
         elif mode == "full" and self.comms_mode == "denied":
@@ -948,7 +988,7 @@ class FleetManager:
         """Autonomous behavior when C2 link is down. Called from step()."""
         if self.comms_mode != "denied" or self.comms_denied_since is None:
             return
-        elapsed = time.time() - self.comms_denied_since
+        self._comms_denied_steps += 1
 
         # Standing orders — fire once per denial episode
         if not self._comms_fallback_executed:
@@ -961,9 +1001,9 @@ class FleetManager:
                 self._execute_comms_fallback("comms_denied_standing_order")
             self._comms_fallback_executed = True
 
-        # Level 3: auto-engage after escalation delay
+        # Level 3: auto-engage after escalation delay (sim-time based)
         if (self.intercept_recommended
-                and elapsed > 60.0
+                and self._comms_denied_steps >= ESCALATION_STEPS
                 and self.active_mission != MissionType.INTERCEPT):
             self._auto_engage_threat()
 

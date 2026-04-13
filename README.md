@@ -116,7 +116,7 @@ aesthetic designed for a second monitor during demos.
 ## Tests
 
 ```bash
-.venv/bin/python -m pytest tests/ -v  # 222 tests
+.venv/bin/python -m pytest tests/ -v  # 249 tests
 ```
 
 ## License

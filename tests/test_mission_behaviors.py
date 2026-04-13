@@ -147,8 +147,14 @@ def test_intercept_unchanged():
     fm.spawn_contact("tgt-1", x=3000, y=0, heading=math.pi, speed=5.0)
     cmd = _make_cmd(MissionType.INTERCEPT, waypoint_x=3000, waypoint_y=0, speed=8.0)
     fm.dispatch_command(cmd)
-    # Run until completion — should go IDLE (not loop)
+    # Vessels pursue the contact — should stay EXECUTING while contact exists
     for _ in range(2000):
+        fm.step(0.25)
+    statuses = [v["status"] for v in fm.vessels.values()]
+    assert AssetStatus.EXECUTING in statuses
+    # Remove the contact — vessels should go idle on next waypoint arrival
+    fm.remove_contact("tgt-1")
+    for _ in range(500):
         fm.step(0.25)
     statuses = [v["status"] for v in fm.vessels.values()]
     assert AssetStatus.IDLE in statuses

@@ -11,7 +11,7 @@ export default defineConfig({
         target: 'ws://localhost:8000',
         ws: true,
       },
-      '/monitor': {
+      '/monitor/ws': {
         target: 'ws://localhost:8000',
         ws: true,
       },

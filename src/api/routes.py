@@ -141,6 +141,13 @@ def create_router() -> APIRouter:
             return {"success": False, "error": "COMMS DENIED — fleet operating autonomously"}
         fm.dispatch_command(cmd)
         commander.last_command = cmd
+        commander.last_parse_info = {
+            "text": f"[direct] {cmd.mission_type.value}" if cmd.mission_type else "[direct]",
+            "method": "direct",
+            "time_ms": 0,
+            "mission": cmd.mission_type.value if cmd.mission_type else None,
+            "formation": cmd.formation.value if cmd.formation else None,
+        }
         return {"success": True, "fleet_command": cmd.model_dump()}
 
     # ------------------------------------------------------------------

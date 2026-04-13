@@ -82,9 +82,8 @@ def test_comms_denied_auto_engage_after_delay():
     # Spawn contact at critical range
     fm.spawn_contact("bogey-1", 1500, 0, math.pi, 1.0)
     fm.set_comms_mode("denied")
-    # Mock time to simulate delay elapsed
-    original_since = fm.comms_denied_since
-    fm.comms_denied_since = time.time() - 70  # 70s ago (past 60s delay)
+    # Simulate 60 sim-seconds elapsed (240 steps at 4Hz)
+    fm._comms_denied_steps = 250  # past 240-step threshold
     # Run threat check to set intercept_recommended
     fm._check_threats()
     assert fm.intercept_recommended
@@ -216,7 +215,7 @@ def test_auto_engage_fires_once():
     fm = _make_fleet_manager()
     fm.spawn_contact("bogey-1", 1500, 0, math.pi, 1.0)
     fm.set_comms_mode("denied")
-    fm.comms_denied_since = time.time() - 70  # past 60s timeout
+    fm._comms_denied_steps = 250  # past 240-step threshold
     fm._check_threats()
     assert fm.intercept_recommended
     # Call handle_comms_denied 10 times

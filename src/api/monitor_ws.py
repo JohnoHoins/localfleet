@@ -64,10 +64,11 @@ def create_monitor_router() -> APIRouter:
                 warning = sum(1 for ta in fm.threat_assessments if ta.threat_level == "warning")
                 auto_engage_countdown = None
                 if fm.comms_mode == "denied" and fm.comms_denied_since:
-                    elapsed = time.time() - fm.comms_denied_since
-                    remaining = 60.0 - elapsed
-                    if remaining > 0 and critical > 0:
-                        auto_engage_countdown = round(remaining, 1)
+                    from src.fleet.fleet_manager import ESCALATION_STEPS
+                    remaining_steps = ESCALATION_STEPS - fm._comms_denied_steps
+                    remaining_secs = remaining_steps * 0.25  # dt = 0.25s
+                    if remaining_secs > 0 and critical > 0:
+                        auto_engage_countdown = round(remaining_secs, 1)
 
                 threats_data = {
                     "contact_count": len(fm.contacts),
