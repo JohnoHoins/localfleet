@@ -84,6 +84,4 @@ cd dashboard && pnpm dev
 - **Loiter orbit**: Octagon waypoints use compensated radius `150 / cos(pi/8)` ≈ 162m so inscribed radius ≈ 150m target.
 
 ## Reference Files
-Context dumps used during project creation are in `docs/reference/`:
-- `all_source_code.txt`, `src_code.txt`, `dashboard_code.txt`, `tests_code.txt`
-- `config_files.txt`, `file_list.txt`, `project_tree.txt`, `memory_dump.txt`
+Context dumps used during project creation are in `docs/reference/` (gitignored).

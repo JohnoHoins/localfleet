@@ -238,6 +238,37 @@ export default function FleetMap({ assets, trails = {}, contacts = [], contactTr
         )
       })()}
 
+      {/* Formation lines — connect surface vessels to show geometry */}
+      {(() => {
+        const surfaceAssets = assets.filter(a => a.domain === 'surface')
+        if (surfaceAssets.length < 2) return null
+        // Sort by asset_id for consistent ordering
+        const sorted = [...surfaceAssets].sort((a, b) => a.asset_id.localeCompare(b.asset_id))
+        const positions = sorted.map(a => metersToLatLng(a.x, a.y))
+        return (
+          <Polyline
+            positions={positions}
+            pathOptions={{ color: '#06b6d4', weight: 1, opacity: 0.3, dashArray: '4 6' }}
+          />
+        )
+      })()}
+
+      {/* Contact heading indicators — short line showing movement direction */}
+      {contacts.map((contact) => {
+        const pos = metersToLatLng(contact.x, contact.y)
+        const headLen = 80 // meters
+        const endX = contact.x + headLen * Math.cos(contact.heading)
+        const endY = contact.y + headLen * Math.sin(contact.heading)
+        const endPos = metersToLatLng(endX, endY)
+        return (
+          <Polyline
+            key={`chdg-${contact.contact_id}`}
+            positions={[pos, endPos]}
+            pathOptions={{ color: '#ef4444', weight: 2, opacity: 0.7 }}
+          />
+        )
+      })}
+
       {/* Asset markers */}
       {assets.map((asset) => {
         const pos = metersToLatLng(asset.x, asset.y)

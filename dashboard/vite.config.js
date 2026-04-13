@@ -11,6 +11,18 @@ export default defineConfig({
         target: 'ws://localhost:8000',
         ws: true,
       },
+      '/monitor': {
+        target: 'ws://localhost:8000',
+        ws: true,
+      },
+    },
+  },
+  build: {
+    rollupOptions: {
+      input: {
+        main: 'index.html',
+        monitor: 'monitor.html',
+      },
     },
   },
 })

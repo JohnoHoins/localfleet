@@ -410,7 +410,7 @@ deferred until blend completes.
 ### What Works Well Enough to Show
 1. **Intercept with replan** (TEST-07) — Full kill chain TRACK→LOCK→ENGAGE, target
    direction change handled, confidence curve from 0.30→0.98. "This one showcased a
-   lot of awesome stuff" — Johno's words.
+   lot of awesome stuff" — operator's words.
 2. **Escort** (TEST-03) — 18m closest approach, drone tracks the target continuously.
 3. **Loiter** (TEST-04) — All vessels orbiting at different centers, drone orbiting
    fleet centroid. Visually impressive even at 131m radius.

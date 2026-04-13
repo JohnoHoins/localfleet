@@ -43,7 +43,7 @@ ollama serve
 ### Terminal 2 — FastAPI Backend
 
 ```bash
-cd /Users/johno/Projects/localfleet
+cd localfleet
 uvicorn src.api.server:app --reload --port 8000
 ```
 
@@ -52,7 +52,7 @@ uvicorn src.api.server:app --reload --port 8000
 ### Terminal 3 — React Dashboard
 
 ```bash
-cd /Users/johno/Projects/localfleet/dashboard
+cd localfleet/dashboard
 pnpm dev --port 5173
 ```
 

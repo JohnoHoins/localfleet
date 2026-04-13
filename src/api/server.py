@@ -14,6 +14,7 @@ from src.fleet.fleet_commander import FleetCommander
 from src.logging.mission_logger import MissionLogger
 from src.api.routes import create_router
 from src.api.ws import create_ws_router
+from src.api.monitor_ws import create_monitor_router
 
 if TYPE_CHECKING:
     pass
@@ -36,9 +37,15 @@ async def lifespan(app: FastAPI):
 
 async def _sim_loop(app: FastAPI):
     """Advance simulation at 4Hz, running time_scale sub-steps per tick."""
+    import time as _time
+    app.state.tick_count = 0
+    app.state.last_step_time_us = 0
     while True:
+        t0 = _time.perf_counter()
         for _ in range(app.state.time_scale):
             app.state.commander.step(SIM_DT)
+        app.state.last_step_time_us = int((_time.perf_counter() - t0) * 1_000_000)
+        app.state.tick_count += 1
         await asyncio.sleep(SIM_DT)
 
 
@@ -52,6 +59,7 @@ def create_app(
 
     app = FastAPI(title="LocalFleet", version="1.0.0", lifespan=lifespan)
 
+    # Permissive CORS — intentional for local-only development/demo use
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["*"],
@@ -65,6 +73,7 @@ def create_app(
 
     app.include_router(create_router(), prefix="/api")
     app.include_router(create_ws_router())
+    app.include_router(create_monitor_router())
 
     return app
 

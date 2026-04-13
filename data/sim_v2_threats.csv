@@ -1,9 +1,0 @@
-test_id,contact_id,first_seen,closest_approach_m,drone_track_time,transitions
-TEST-03-ESCORT,escort-target,1775088623.211,18,1775088623.465,none->critical@157m
-TEST-06-THREAT-ESCALATION,bogey-far,1775089277.867,7121,,none->none@8685m | none->detected@8000m
-TEST-07-INTERCEPT-REPLAN,bogey-mover,1775089519.936,1051,1775089555.627,none->warning@4792m | warning->critical@1995m
-TEST-11-COMMS-AUTOENGAGE,bogey-auto,1775090507.667,16,1775090507.922,none->warning@2491m | warning->critical@2000m
-TEST-14-DOUBLE-DENIAL,bogey-stress,1775091321.741,154,1775091321.741,none->warning@3215m | warning->critical@1998m
-TEST-17-MULTI-CONTACT,bogey-A,1775092767.185,5970,,none->detected@6485m
-TEST-17-MULTI-CONTACT,bogey-B,1775092767.185,1935,,none->warning@2924m
-TEST-17-MULTI-CONTACT,bogey-C,1775092767.185,1051,1775092767.440,none->critical@1345m

@@ -1,13 +1,13 @@
 # V2 Simulation — Observer Notes (Formatted)
 
-Live observations from Johno watching the dashboard during the V2 run,
+Live observations from the operator watching the dashboard during the V2 run,
 cross-referenced with captured telemetry data.
 
 ---
 
 ## TEST-01: PATROL (Echelon Formation, 3 waypoints, 7 m/s)
 
-### What Johno Saw
+### What the Operator Saw
 - Ships headed in **separate directions** but generally the same way
 - Eventually fell into **single file**, one after another on the same path
 - Made **two turns** while in single file (right-handed)
@@ -31,7 +31,7 @@ cross-referenced with captured telemetry data.
 
 ## TEST-02: SEARCH (Line Abreast, 1 waypoint, 5 m/s)
 
-### What Johno Saw
+### What the Operator Saw
 - All vehicles headed out to sea, **formation looked good**
 - Eagle **paused at a location** (stuck)
 - Boats made it to where the drone was, then returned home
@@ -49,7 +49,7 @@ cross-referenced with captured telemetry data.
 
 ## TEST-03: ESCORT (Column Formation, contact at 500m, 4 m/s)
 
-### What Johno Saw
+### What the Operator Saw
 - Target spawned **right on top of them** and started traveling away
 - Drone tracked immediately and followed target away from base
 - Boats didn't seem to move much, then returned to base
@@ -67,7 +67,7 @@ cross-referenced with captured telemetry data.
 
 ## TEST-04: LOITER (Spread Formation, 1 waypoint, 5 m/s)
 
-### What Johno Saw
+### What the Operator Saw
 - Boats **splayed out in different directions**
 - Then all making a **right-hand curve, sharp left, another curve**
 - All three doing **circles**
@@ -87,7 +87,7 @@ cross-referenced with captured telemetry data.
 
 ## TEST-05: AERIAL RECON (Independent, 1 waypoint at 2000m, 5 m/s)
 
-### What Johno Saw
+### What the Operator Saw
 - All headed off in the same direction, **good formation**
 - Drone branched off left, u-turned, went toward boats, u-turned again
 - Drone doing **back-and-forth sweeps** in front/left of the boats
@@ -105,7 +105,7 @@ cross-referenced with captured telemetry data.
 
 ## TEST-06: THREAT ESCALATION (no mission, bogey at ~8900m)
 
-### What Johno Saw
+### What the Operator Saw
 - All stayed still until target entered a certain area
 - Drone left and tracked the target
 
@@ -124,7 +124,7 @@ cross-referenced with captured telemetry data.
 
 ## TEST-07: INTERCEPT REPLAN (bogey at 4000m, direction change at 35s)
 
-### What Johno Saw
+### What the Operator Saw
 - Target entered area, drone gave "instructions" for interception
 - **Target changed course**, interception point moved
 - This one **showcased a lot of awesome stuff**
@@ -143,7 +143,7 @@ cross-referenced with captured telemetry data.
 
 ## TEST-08: COMMS DENIED — Continue Mission
 
-### What Johno Saw
+### What the Operator Saw
 - Drone left, got ahead, started circling
 - Boats followed
 - Comms went down, boats **continued the mission**
@@ -160,7 +160,7 @@ cross-referenced with captured telemetry data.
 
 ## TEST-09: COMMS DENIED — Hold Position
 
-### What Johno Saw
+### What the Operator Saw
 - Comms went out on the way out
 - Boats **formation maybe a little off**
 - Made it to the drone, comms came back, returned to base
@@ -172,7 +172,7 @@ cross-referenced with captured telemetry data.
 
 ### Issues Identified
 1. **hold_position standing order is BROKEN** — vessels should have stopped when comms were denied, but they kept moving at full speed. The comms_lost_behavior="hold_position" is not being honored by the fleet manager.
-2. This matches Johno's observation that the formation looked off but they kept going.
+2. This matches the operator's observation that the formation looked off but they kept going.
 
 ---
 
@@ -189,11 +189,11 @@ cross-referenced with captured telemetry data.
 
 ---
 
-## General Observations from Johno
+## General Observations from the Operator
 
 ### "Boats speed vs Havoc's actual boats"
 - V2 tested speeds from 2-10 m/s. Actual surface speeds achieved: 4.4-9.3 m/s
-- **Question for Johno**: What speed do Havoc's boats actually run at? This should be configured to match.
+- **Question**: What speed do the target platform's boats actually run at? This should be configured to match.
 
 ### "Missions need to be further out / more complex"
 - The short-range tests (500-2000m) are good for diagnostics but don't showcase realistic scenarios

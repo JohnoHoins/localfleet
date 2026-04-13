@@ -59,13 +59,15 @@ echo "[OK] Fleet reset to clean state"
 
 # 6. Open browser
 echo ""
-echo "[OK] Opening dashboard..."
+echo "[OK] Opening dashboard + system monitor..."
 open http://localhost:5173
+open http://localhost:5173/monitor.html
 
 echo ""
 echo "==============================="
 echo "  LOCALFLEET READY"
 echo "  Dashboard: http://localhost:5173"
+echo "  Monitor:   http://localhost:5173/monitor.html"
 echo "  Backend:   http://127.0.0.1:8000"
 echo "==============================="
 echo ""
