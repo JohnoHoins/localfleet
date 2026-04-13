@@ -20,6 +20,7 @@ dashboard/dist/
 
 # Claude Code
 .claude/
+CLAUDE.md
 
 # Reference dumps (large context files)
 docs/reference/
