@@ -39,6 +39,7 @@ docs/simulation_master_prompt.md
 docs/simulation_v2_prompt.md
 docs/simulation_analysis_prompt.md
 docs/demo_prep_prompt.md
+docs/demo_final_script.md
 
 # Audit pipeline (internal development tooling)
 docs/audit_pipeline/
