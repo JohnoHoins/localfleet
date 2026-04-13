@@ -137,6 +137,7 @@ class FleetManager:
         # De-duplication guards for decision log (prevent spam)
         self._last_logged_threat_level: Dict[str, str] = {}
         self._last_logged_kc_phase: str | None = None
+        self._drone_tracking_contact: str | None = None
 
     # ------------------------------------------------------------------
     # Contact (target) management
@@ -155,6 +156,8 @@ class FleetManager:
     def remove_contact(self, contact_id: str) -> bool:
         """Remove a contact by ID. Returns True if it existed."""
         self._last_logged_threat_level.pop(contact_id, None)
+        if self._drone_tracking_contact == contact_id:
+            self._drone_tracking_contact = None
         return self.contacts.pop(contact_id, None) is not None
 
     # ------------------------------------------------------------------
@@ -391,6 +394,8 @@ class FleetManager:
         )
 
         # Only update if intercept point shifted more than threshold
+        shifted_any = False
+        max_shift = 0.0
         for vid, v in executing.items():
             wpts_x = v["waypoints_x"]
             wpts_y = v["waypoints_y"]
@@ -400,14 +405,17 @@ class FleetManager:
             cur_wp_y = wpts_y[-1] / METERS_TO_NMI
             shift = math.sqrt((pred_x - cur_wp_x) ** 2 + (pred_y - cur_wp_y) ** 2)
             if shift > REPLAN_SHIFT_THRESHOLD:
-                self.decision_log.log(
-                    "replan",
-                    f"Waypoints shifted {shift:.0f}m",
-                    f"({cur_wp_x:.0f},{cur_wp_y:.0f}) → ({pred_x:.0f},{pred_y:.0f}). "
-                    f"Target moved since last plan.",
-                )
                 wpts_x[-1] = pred_x * METERS_TO_NMI
                 wpts_y[-1] = pred_y * METERS_TO_NMI
+                shifted_any = True
+                max_shift = max(max_shift, shift)
+
+        if shifted_any:
+            self.decision_log.log(
+                "replan",
+                f"Fleet waypoints replanned, shifted {max_shift:.0f}m",
+                f"Target moving. Predicted intercept updated.",
+            )
 
     def _update_formation_positions(self):
         """Continuously update follower waypoints to maintain formation."""
@@ -516,7 +524,17 @@ class FleetManager:
                 if i_wpt >= len(wpts_x):
                     # Mission-specific behavior at last waypoint
                     if self.active_mission in (MissionType.PATROL, MissionType.SEARCH):
-                        # Loop back to first real waypoint
+                        is_leader = (vid == next(iter(self.vessels)))
+                        if len(wpts_x) <= 2 and (
+                            self.formation == FormationType.INDEPENDENT
+                            or is_leader
+                        ):
+                            # Single waypoint — swap start↔dest for out-and-back.
+                            # Only for leader/independent; followers have their
+                            # target continuously updated by formation tracking
+                            # and never spiral.
+                            wpts_x[0], wpts_x[1] = wpts_x[1], wpts_x[0]
+                            wpts_y[0], wpts_y[1] = wpts_y[1], wpts_y[0]
                         v["i_wpt"] = 1
                         i_wpt = 1
                         # Fall through to navigation below
@@ -741,10 +759,9 @@ class FleetManager:
                         break
 
         if self.kill_chain_phase != old_phase and self.kill_chain_phase is not None:
-            # Only log if this is a genuinely new transition (not a repeated one)
-            transition_key = f"{old_phase}→{self.kill_chain_phase}"
-            if transition_key != self._last_logged_kc_phase:
-                self._last_logged_kc_phase = transition_key
+            # Only log if the destination phase is genuinely new
+            if self.kill_chain_phase != self._last_logged_kc_phase:
+                self._last_logged_kc_phase = self.kill_chain_phase
                 self.decision_log.log(
                     "kill_chain_transition",
                     f"Kill chain: {old_phase or 'NONE'} → {self.kill_chain_phase}",
@@ -800,14 +817,17 @@ class FleetManager:
                             altitude=100.0,
                         )
                         self.drone.status = AssetStatus.EXECUTING
-                        self.decision_log.log(
-                            "auto_track",
-                            f"Eagle-1 → TRACK {ta.contact_id}",
-                            f"Contact {ta.distance:.0f}m ({ta.threat_level}). Fleet "
-                            f"{'idle' if not active_intercept else 'not intercepting'}. "
-                            f"Drone fastest asset (15 m/s), aerial advantage.",
-                            assets=["eagle-1"],
-                        )
+                        # Only log when drone starts tracking a NEW contact
+                        if ta.contact_id != self._drone_tracking_contact:
+                            self._drone_tracking_contact = ta.contact_id
+                            self.decision_log.log(
+                                "auto_track",
+                                f"Eagle-1 → TRACK {ta.contact_id}",
+                                f"Contact {ta.distance:.0f}m ({ta.threat_level}). Fleet "
+                                f"{'idle' if not active_intercept else 'not intercepting'}. "
+                                f"Drone fastest asset (15 m/s), aerial advantage.",
+                                assets=["eagle-1"],
+                            )
 
     # ------------------------------------------------------------------
     # State query
