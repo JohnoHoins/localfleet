@@ -8,8 +8,22 @@ import time
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
+from src.fleet.fleet_manager import SIM_DT
+from src.llm import ollama_client
+
 
 MONITOR_INTERVAL = 0.5  # 2Hz
+OLLAMA_CHECK_INTERVAL = 10.0  # seconds between Ollama reachability checks
+
+
+async def _ollama_status(app) -> bool:
+    """Cached Ollama reachability, refreshed at most every 10s."""
+    now = time.time()
+    checked = getattr(app.state, "ollama_checked_at", 0.0)
+    if now - checked >= OLLAMA_CHECK_INTERVAL:
+        app.state.ollama_checked_at = now
+        app.state.ollama_up = await asyncio.to_thread(ollama_client.test_connection)
+    return getattr(app.state, "ollama_up", False)
 
 
 def create_monitor_router() -> APIRouter:
@@ -19,10 +33,12 @@ def create_monitor_router() -> APIRouter:
     async def monitor_ws(websocket: WebSocket):
         await websocket.accept()
         commander = websocket.app.state.commander
-        fm = commander.fleet_manager
 
         try:
             while True:
+                # Re-read every tick: /api/reset swaps in a new FleetManager
+                fm = commander.fleet_manager
+
                 # --- Simulation stats ---
                 executing = sum(
                     1 for v in fm.vessels.values()
@@ -64,9 +80,8 @@ def create_monitor_router() -> APIRouter:
                 warning = sum(1 for ta in fm.threat_assessments if ta.threat_level == "warning")
                 auto_engage_countdown = None
                 if fm.comms_mode == "denied" and fm.comms_denied_since:
-                    from src.fleet.fleet_manager import ESCALATION_STEPS
-                    remaining_steps = ESCALATION_STEPS - fm._comms_denied_steps
-                    remaining_secs = remaining_steps * 0.25  # dt = 0.25s
+                    remaining_steps = fm.escalation_steps - fm._comms_denied_steps
+                    remaining_secs = remaining_steps * SIM_DT
                     if remaining_secs > 0 and critical > 0:
                         auto_engage_countdown = round(remaining_secs, 1)
 
@@ -78,12 +93,14 @@ def create_monitor_router() -> APIRouter:
                     "kill_chain_phase": fm.kill_chain_phase,
                     "kill_chain_target": fm.kill_chain_target,
                     "auto_engage_countdown": auto_engage_countdown,
+                    "auto_engage_delay": fm.escalation_steps * SIM_DT,
                 }
 
                 # --- Comms ---
+                # Sim-time, consistent with the escalation countdown
                 denied_dur = 0.0
                 if fm.comms_mode == "denied" and fm.comms_denied_since:
-                    denied_dur = time.time() - fm.comms_denied_since
+                    denied_dur = fm._comms_denied_steps * SIM_DT
                 comms_data = {
                     "mode": fm.comms_mode,
                     "denied_duration": round(denied_dur, 1),
@@ -106,18 +123,19 @@ def create_monitor_router() -> APIRouter:
                     "dr_drift_meters": round(max_drift, 1),
                     "blending": fm._gps_blending,
                 }
+                if fm.gps_mode.value != "denied" and not fm._gps_blending:
+                    gps_data["dr_drift_meters"] = 0.0
 
                 # --- Decisions (last 20) ---
                 decisions = fm.decision_log.to_dicts(n=20)
 
                 # --- Performance ---
-                from src.api.ws import create_ws_router  # just for client count
-                ws_clients = getattr(websocket.app.state, "ws_client_count", 1)
+                ws_clients = getattr(websocket.app.state, "ws_client_count", 0)
                 perf_data = {
                     "ws_clients": ws_clients,
                     "step_time_us": step_time_us,
-                    "ollama_loaded": True,
-                    "ollama_model": "qwen2.5:72b",
+                    "ollama_loaded": await _ollama_status(websocket.app),
+                    "ollama_model": ollama_client.MODEL,
                 }
 
                 payload = {

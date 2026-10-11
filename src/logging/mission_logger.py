@@ -6,6 +6,7 @@ to a SQLite database in data/logs/.
 import json
 import os
 import sqlite3
+import threading
 import time
 from datetime import datetime
 from typing import List, Optional
@@ -31,6 +32,8 @@ class MissionLogger:
         self.db_path = db_path
         self._conn = sqlite3.connect(db_path, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
+        # The connection is shared by the sim loop and request threads
+        self._lock = threading.Lock()
         self._create_table()
 
     def _create_table(self):
@@ -58,6 +61,10 @@ class MissionLogger:
     # ------------------------------------------------------------------
     def log_event(self, event: MissionEvent):
         """Insert a single MissionEvent into the database."""
+        with self._lock:
+            self._insert(event)
+
+    def _insert(self, event: MissionEvent):
         self._conn.execute(
             "INSERT INTO events (timestamp, event_type, asset_id, domain, data, created_at) "
             "VALUES (?, ?, ?, ?, ?, ?)",
@@ -109,8 +116,13 @@ class MissionLogger:
         start_time: Optional[float] = None,
         end_time: Optional[float] = None,
         limit: int = 1000,
+        newest: bool = False,
     ) -> List[MissionEvent]:
-        """Query logged events with optional filters."""
+        """Query logged events with optional filters.
+
+        Results are always oldest-first. With newest=True the limit keeps
+        the most recent events instead of the earliest ones.
+        """
         clauses: List[str] = []
         params: list = []
 
@@ -128,20 +140,27 @@ class MissionLogger:
             params.append(end_time)
 
         where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
-        sql = f"SELECT * FROM events{where} ORDER BY timestamp ASC LIMIT ?"
+        if newest:
+            sql = (f"SELECT * FROM (SELECT * FROM events{where} "
+                   f"ORDER BY timestamp DESC, id DESC LIMIT ?) "
+                   f"ORDER BY timestamp ASC, id ASC")
+        else:
+            sql = f"SELECT * FROM events{where} ORDER BY timestamp ASC, id ASC LIMIT ?"
         params.append(limit)
 
-        rows = self._conn.execute(sql, params).fetchall()
+        with self._lock:
+            rows = self._conn.execute(sql, params).fetchall()
         return [self._row_to_event(r) for r in rows]
 
     def count_events(self, event_type: Optional[str] = None) -> int:
         """Count events, optionally filtered by type."""
-        if event_type:
-            row = self._conn.execute(
-                "SELECT COUNT(*) FROM events WHERE event_type = ?", (event_type,)
-            ).fetchone()
-        else:
-            row = self._conn.execute("SELECT COUNT(*) FROM events").fetchone()
+        with self._lock:
+            if event_type:
+                row = self._conn.execute(
+                    "SELECT COUNT(*) FROM events WHERE event_type = ?", (event_type,)
+                ).fetchone()
+            else:
+                row = self._conn.execute("SELECT COUNT(*) FROM events").fetchone()
         return row[0]
 
     # ------------------------------------------------------------------

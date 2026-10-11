@@ -20,6 +20,7 @@ if TYPE_CHECKING:
     pass
 
 SIM_DT = 0.25  # 4Hz simulation tick
+LOG_INTERVAL = 20  # Log a state snapshot every 20 ticks (5 seconds)
 
 
 @asynccontextmanager
@@ -46,6 +47,14 @@ async def _sim_loop(app: FastAPI):
             app.state.commander.step(SIM_DT)
         app.state.last_step_time_us = int((_time.perf_counter() - t0) * 1_000_000)
         app.state.tick_count += 1
+        # Log state from the sim loop so the mission log is complete whether
+        # or not a dashboard is connected (and not duplicated per client)
+        logger = getattr(app.state, "logger", None)
+        if logger and app.state.tick_count % LOG_INTERVAL == 0:
+            try:
+                await asyncio.to_thread(logger.log_state, app.state.commander.get_state())
+            except Exception:  # never let logging stop the simulation
+                pass
         await asyncio.sleep(SIM_DT)
 
 

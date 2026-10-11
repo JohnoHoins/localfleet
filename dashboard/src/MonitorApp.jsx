@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 
-const KILL_CHAIN_PHASES = ['DETECT', 'TRACK', 'LOCK', 'ENGAGE']
+const KILL_CHAIN_PHASES = ['DETECT', 'TRACK', 'LOCK', 'ENGAGE', 'CONVERGE']
 
 function useMonitorWs() {
   const [data, setData] = useState(null)
@@ -127,7 +127,7 @@ function ThreatPanel({ threats }) {
           <div className="countdown-bar">
             <div
               className="countdown-fill"
-              style={{ width: `${Math.max(0, (threats.auto_engage_countdown / 60) * 100)}%` }}
+              style={{ width: `${Math.max(0, (threats.auto_engage_countdown / (threats.auto_engage_delay || 60)) * 100)}%` }}
             />
             <span className="countdown-text">{threats.auto_engage_countdown.toFixed(0)}s</span>
           </div>

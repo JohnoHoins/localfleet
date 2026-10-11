@@ -55,7 +55,7 @@ ollama pull qwen2.5:72b
 
 # Backend
 python -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
+pip install -r requirements.txt   # mlx-whisper (voice) installs on Apple Silicon only
 uvicorn src.api.server:app --host 127.0.0.1 --port 8000
 
 # Dashboard (separate terminal)
@@ -86,9 +86,12 @@ The threat detector continuously evaluates contacts by range and closing rate:
 - **5km**: warning (drone auto-retasks to TRACK)
 - **2km**: critical (intercept recommended to operator)
 
-The kill chain progresses through DETECT, TRACK, LOCK, ENGAGE phases. Under
-comms denial, after a configurable 60-second escalation delay, the fleet
-autonomously engages the highest-priority threat — logged with full rationale.
+The kill chain progresses through DETECT, TRACK, LOCK, ENGAGE phases, then
+CONVERGE as the fleet closes. Reaching the target is logged once and the fleet
+shadows it; the chain never restarts on a target it already intercepted. Under
+comms denial, after a configurable 60-second escalation delay
+(`LOCALFLEET_ESCALATION_SECONDS`, sim-time), the fleet autonomously engages the
+highest-priority threat — logged with full rationale.
 
 ### Degraded Mode Operations
 
@@ -96,9 +99,10 @@ autonomously engages the highest-priority threat — logged with full rationale.
 return to base). Each fires exactly once on comms loss — no action spam. One-shot
 guard resets when comms are restored.
 
-**GPS-denied**: Dead reckoning with 0.5% drift per step. Physics and land avoidance
-always use true position (vessels don't run aground from DR error). GPS restore
-blends smoothly over 5 seconds — no position snap.
+**GPS-denied**: Dead reckoning from measured speed and course, with 0.5% of
+distance run added as drift each step. Physics and land avoidance always use
+true position (vessels don't run aground from DR error). GPS restore blends the
+DR error out over 5 seconds — no position snap on the map or in navigation.
 
 ### System Monitor
 
@@ -116,7 +120,7 @@ aesthetic designed for a second monitor during demos.
 ## Tests
 
 ```bash
-.venv/bin/python -m pytest tests/ -v  # 249 tests
+.venv/bin/python -m pytest tests/ -v  # 266 tests (2 need a running Ollama)
 ```
 
 ## License

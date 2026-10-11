@@ -246,6 +246,9 @@ def test_gps_restore_smooth_blend():
     fm.set_gps_mode(GpsMode.DENIED)
     for _ in range(100):
         fm.step(dt)
+    # Real DR drift is only ~0.5% of distance run, so give the estimate a
+    # known 60m error to make the blend measurable.
+    fm.dr_states["alpha"].estimated_x += 60.0
 
     # Record DR position before restore
     dr_x = fm.dr_states["alpha"].estimated_x

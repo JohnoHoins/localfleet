@@ -73,7 +73,7 @@ def create_router() -> APIRouter:
         fm.set_comms_mode(req.mode)
         elapsed = 0.0
         if fm.comms_mode == "denied" and fm.comms_denied_since:
-            elapsed = time.time() - fm.comms_denied_since
+            elapsed = fm._comms_denied_steps * 0.25  # sim-seconds
         return {
             "comms_mode": fm.comms_mode,
             "autonomous_actions": fm.autonomous_actions[-10:],
@@ -86,6 +86,7 @@ def create_router() -> APIRouter:
         commander = request.app.state.commander
         commander.fleet_manager = FleetManager()
         commander.last_command = None
+        commander.last_parse_info = None
         return {"success": True, "message": "Fleet reset to initial state"}
 
     class TimeScaleRequest(BaseModel):
@@ -141,6 +142,8 @@ def create_router() -> APIRouter:
             return {"success": False, "error": "COMMS DENIED — fleet operating autonomously"}
         fm.dispatch_command(cmd)
         commander.last_command = cmd
+        if commander.logger:
+            commander.logger.log_command(cmd)
         commander.last_parse_info = {
             "text": f"[direct] {cmd.mission_type.value}" if cmd.mission_type else "[direct]",
             "method": "direct",
@@ -217,7 +220,7 @@ def create_router() -> APIRouter:
         if logger is None:
             return {"events": [], "count": 0}
         events = logger.get_events(
-            event_type=event_type, asset_id=asset_id, limit=limit,
+            event_type=event_type, asset_id=asset_id, limit=limit, newest=True,
         )
         return {
             "events": [e.model_dump(mode="json") for e in events],
