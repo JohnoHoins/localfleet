@@ -3,8 +3,10 @@
 LocalFleet Simulation Data Analyzer
 
 Reads captured data from data/sim_capture.jsonl and produces:
-  - data/sim_report.txt  — human-readable metrics summary
-  - data/sim_timeline.csv — second-by-second state timeline
+  - data/sim_runs/sim_report.txt  — human-readable metrics summary
+  - data/sim_runs/sim_timeline.csv — second-by-second state timeline
+Outputs go to data/sim_runs/ (gitignored) so the reference report committed
+as data/sim_report.txt is not overwritten.
 
 Usage:
     .venv/bin/python scripts/analyze_simulation.py
@@ -20,8 +22,9 @@ from pathlib import Path
 DATA_DIR = Path(__file__).resolve().parent.parent / "data"
 CAPTURE_FILE = DATA_DIR / "sim_capture.jsonl"
 DECISIONS_FILE = DATA_DIR / "sim_decisions.jsonl"
-REPORT_FILE = DATA_DIR / "sim_report.txt"
-TIMELINE_FILE = DATA_DIR / "sim_timeline.csv"
+OUT_DIR = DATA_DIR / "sim_runs"
+REPORT_FILE = OUT_DIR / "sim_report.txt"
+TIMELINE_FILE = OUT_DIR / "sim_timeline.csv"
 
 # ---------------------------------------------------------------------------
 # Data Loading
@@ -639,6 +642,7 @@ def main():
     anomalies = detect_anomalies(frames)
     print(f"  Found {len(anomalies)} anomalies")
 
+    OUT_DIR.mkdir(parents=True, exist_ok=True)
     print(f"\nWriting report to {REPORT_FILE}...")
     report = write_report(asset_metrics, contact_metrics, fleet_metrics, anomalies, REPORT_FILE)
 

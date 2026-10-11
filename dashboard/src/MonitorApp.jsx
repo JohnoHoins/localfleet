@@ -1,45 +1,77 @@
 import { useState, useEffect, useRef } from 'react'
 
-const KILL_CHAIN_PHASES = ['DETECT', 'TRACK', 'LOCK', 'ENGAGE']
+const KILL_CHAIN_PHASES = ['DETECT', 'TRACK', 'LOCK', 'ENGAGE', 'CONVERGE']
+
+// Keyed by the decision types the backend logs (DecisionLog.log callers)
+const DECISION_TYPE_COLORS = {
+  threat_assessment: '#ef4444',
+  auto_track: '#06b6d4',
+  kill_chain_transition: '#f59e0b',
+  intercept_complete: '#22c55e',
+  auto_engage: '#ef4444',
+  intercept_solution: '#f59e0b',
+  replan: '#8b5cf6',
+  comms_fallback: '#f97316',
+}
+
+const OLLAMA_COLORS = { loaded: '#22c55e', cold: '#f59e0b' }
 
 function useMonitorWs() {
   const [data, setData] = useState(null)
   const [connected, setConnected] = useState(false)
-  const wsRef = useRef(null)
 
   useEffect(() => {
+    let ws = null
+    let reconnectTimer = null
+    let closed = false // set on unmount (StrictMode mounts twice in dev): stop reconnecting
+
     function connect() {
       const proto = location.protocol === 'https:' ? 'wss' : 'ws'
-      const ws = new WebSocket(`${proto}://${location.host}/monitor/ws`)
-      wsRef.current = ws
-      ws.onopen = () => setConnected(true)
-      ws.onclose = () => {
+      const sock = new WebSocket(`${proto}://${location.host}/monitor/ws`)
+      ws = sock
+      sock.onopen = () => setConnected(true)
+      sock.onclose = () => {
+        if (closed) return
         setConnected(false)
-        setTimeout(connect, 2000)
+        reconnectTimer = setTimeout(connect, 2000)
       }
-      ws.onmessage = (e) => {
-        try { setData(JSON.parse(e.data)) } catch {}
+      sock.onmessage = (e) => {
+        if (closed) return
+        try {
+          setData(JSON.parse(e.data))
+        } catch {
+          // ignore malformed frames
+        }
       }
     }
     connect()
-    return () => wsRef.current?.close()
+    return () => {
+      closed = true
+      clearTimeout(reconnectTimer)
+      // Closing mid-handshake makes the browser log an error; close once open
+      if (ws.readyState === WebSocket.CONNECTING) ws.onopen = () => ws.close()
+      else ws.close()
+    }
   }, [])
 
   return { data, connected }
 }
 
+// Briefly highlights its content whenever `value` changes. Restarts the CSS
+// animation on the DOM node directly, so a change costs no extra render.
 function Flash({ value, children }) {
+  const ref = useRef(null)
   const prev = useRef(value)
-  const [flash, setFlash] = useState(false)
   useEffect(() => {
-    if (value !== prev.current) {
-      setFlash(true)
-      prev.current = value
-      const t = setTimeout(() => setFlash(false), 200)
-      return () => clearTimeout(t)
-    }
+    if (value === prev.current) return
+    prev.current = value
+    const el = ref.current
+    if (!el) return
+    el.classList.remove('monitor-flash')
+    void el.offsetWidth // reflow, so re-adding the class replays the animation
+    el.classList.add('monitor-flash')
   }, [value])
-  return <span className={flash ? 'monitor-flash' : ''}>{children}</span>
+  return <span ref={ref}>{children}</span>
 }
 
 function CommandPanel({ command }) {
@@ -78,6 +110,12 @@ function CommandPanel({ command }) {
         <span className="label">Formation:</span>
         <span className="value">{command.formation || '\u2014'}</span>
       </div>
+      {command.error && (
+        <div className="row" style={{ color: '#ef4444' }}>
+          <span className="label">Error:</span>
+          {command.error}
+        </div>
+      )}
     </div>
   )
 }
@@ -127,7 +165,7 @@ function ThreatPanel({ threats }) {
           <div className="countdown-bar">
             <div
               className="countdown-fill"
-              style={{ width: `${Math.max(0, (threats.auto_engage_countdown / 60) * 100)}%` }}
+              style={{ width: `${Math.max(0, (threats.auto_engage_countdown / (threats.auto_engage_delay || 60)) * 100)}%` }}
             />
             <span className="countdown-text">{threats.auto_engage_countdown.toFixed(0)}s</span>
           </div>
@@ -140,6 +178,9 @@ function ThreatPanel({ threats }) {
 function SimPanel({ sim, comms, gps, performance }) {
   const commsColor = comms?.mode === 'denied' ? '#ef4444' : '#22c55e'
   const gpsColor = gps?.mode === 'denied' ? '#ef4444' : gps?.mode === 'degraded' ? '#f59e0b' : '#22c55e'
+  const ollamaStatus = performance?.ollama_status ?? (performance?.ollama_loaded ? 'loaded' : 'offline')
+  // step_time_us covers a whole 4Hz tick (time_scale sub-steps); prefer the per-step cost
+  const perStepUs = performance?.substep_time_us
   return (
     <div className="monitor-panel">
       <div className="panel-title">SIMULATION ENGINE</div>
@@ -154,6 +195,9 @@ function SimPanel({ sim, comms, gps, performance }) {
       <div className="row">
         <span className="label">Assets:</span>
         <span className="value">{sim?.assets_executing ?? 0} exec</span>
+        {sim?.assets_returning != null && (
+          <span className="dim"> / {sim.assets_returning} rtb</span>
+        )}
         <span className="dim"> / {sim?.assets_idle ?? 0} idle</span>
       </div>
       <div className="row">
@@ -181,13 +225,23 @@ function SimPanel({ sim, comms, gps, performance }) {
         <span className="value">{comms?.standing_orders ?? 'return_to_base'}</span>
       </div>
       <div className="row">
-        <span className="label">Step:</span>
-        <span className="value">{performance?.step_time_us ?? 0}\u00b5s</span>
+        {perStepUs != null ? (
+          <>
+            <span className="label">Step:</span>
+            <span className="value">{perStepUs}{'\u00b5s'}</span>
+            <span className="dim"> ({performance.step_time_us ?? 0}{'\u00b5s'}/tick)</span>
+          </>
+        ) : (
+          <>
+            <span className="label">Tick time:</span>
+            <span className="value">{performance?.step_time_us ?? 0}{'\u00b5s'}</span>
+          </>
+        )}
       </div>
       <div className="row">
         <span className="label">Ollama:</span>
-        <span style={{ color: performance?.ollama_loaded ? '#22c55e' : '#ef4444' }}>
-          {performance?.ollama_loaded ? 'loaded' : 'offline'}
+        <span style={{ color: OLLAMA_COLORS[ollamaStatus] || '#ef4444' }}>
+          {ollamaStatus}
         </span>
         <span className="dim"> ({performance?.ollama_model ?? '?'})</span>
       </div>
@@ -211,18 +265,9 @@ function DecisionLog({ decisions }) {
             const time = d.timestamp
               ? new Date(d.timestamp * 1000).toLocaleTimeString('en-US', { hour12: false })
               : '??:??:??'
-            const typeColor = {
-              threat_assessment: '#ef4444',
-              auto_track: '#06b6d4',
-              kill_chain: '#f59e0b',
-              auto_engage: '#ef4444',
-              intercept_solution: '#f59e0b',
-              replan: '#8b5cf6',
-              comms_denied: '#ef4444',
-              gps_mode_change: '#f97316',
-            }[d.type] || '#64748b'
+            const typeColor = DECISION_TYPE_COLORS[d.type] || '#64748b'
             return (
-              <div key={d.id || i} className="decision-entry">
+              <div key={d.id ?? i} className="decision-entry">
                 <div className="decision-header">
                   <span className="decision-time">{time}</span>
                   <span style={{ color: typeColor }}>[{d.type?.toUpperCase()}]</span>

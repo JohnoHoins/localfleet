@@ -1,10 +1,17 @@
 """
 Local Whisper transcription via mlx-whisper (Apple Silicon optimized).
-Model: whisper-small (~500MB, cached after first download).
+Model: whisper-large-v3-turbo (cached after first download).
+
+mlx-whisper only installs on Apple Silicon. If it is missing the rest of
+the backend still runs; voice commands return a clear error instead of the
+server failing to start.
 """
 import os
 
-import mlx_whisper
+try:
+    import mlx_whisper
+except ImportError:  # not Apple Silicon, or voice extras not installed
+    mlx_whisper = None
 
 MODEL = "mlx-community/whisper-large-v3-turbo"
 
@@ -24,6 +31,11 @@ def transcribe_audio(audio_path: str) -> str:
     """
     if not os.path.exists(audio_path):
         raise FileNotFoundError(f"Audio file not found: {audio_path}")
+
+    if mlx_whisper is None:
+        raise RuntimeError(
+            "Voice input needs mlx-whisper (Apple Silicon only): pip install mlx-whisper"
+        )
 
     try:
         result = mlx_whisper.transcribe(audio_path, path_or_hf_repo=MODEL)

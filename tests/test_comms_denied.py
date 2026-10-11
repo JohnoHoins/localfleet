@@ -125,11 +125,13 @@ def test_comms_denied_contacts_still_work():
 
 def test_comms_denied_duration_tracks():
     fm = _make_fleet_manager()
-    fm.comms_denied_since = time.time() - 10  # 10 seconds ago
-    fm.comms_mode = "denied"
+    fm.set_comms_mode("denied")
+    for _ in range(40):  # 10 sim-seconds
+        fm.step(0.25)
     state = fm.get_fleet_state_dict()
     duration = state.get("autonomy", {}).get("comms_denied_duration", 0)
-    assert duration >= 9.0  # at least 9 seconds
+    # Sim-time, same clock as the auto-engage escalation delay
+    assert duration == 10.0
 
 
 def test_dual_failure_gps_and_comms():

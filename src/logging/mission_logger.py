@@ -1,14 +1,16 @@
 """
 MissionLogger — SQLite-backed event logging for LocalFleet.
 Logs MissionEvent records (commands, state snapshots, GPS changes, etc.)
-to a SQLite database in data/logs/.
+to a SQLite database in data/logs/ (override with LOCALFLEET_LOG_DB).
 """
+import dataclasses
 import json
 import os
 import sqlite3
+import threading
 import time
 from datetime import datetime
-from typing import List, Optional
+from typing import Iterable, List, Optional, Tuple
 
 from src.schemas import (
     DomainType,
@@ -19,6 +21,14 @@ from src.schemas import (
 )
 
 DEFAULT_DB_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "data", "logs")
+DB_PATH_ENV = "LOCALFLEET_LOG_DB"  # full path of the database file
+
+# DecisionEntry fields that map onto the /api/decisions keys
+_DECISION_KEYS = {
+    "decision_type": "type", "action_taken": "action", "rationale": "rationale",
+    "confidence": "confidence", "assets_involved": "assets",
+    "alternatives": "alternatives", "parent_id": "parent_id",
+}
 
 
 class MissionLogger:
@@ -26,11 +36,15 @@ class MissionLogger:
 
     def __init__(self, db_path: Optional[str] = None):
         if db_path is None:
+            db_path = os.environ.get(DB_PATH_ENV)
+        if db_path is None:
             os.makedirs(DEFAULT_DB_DIR, exist_ok=True)
             db_path = os.path.join(DEFAULT_DB_DIR, "mission_log.db")
         self.db_path = db_path
         self._conn = sqlite3.connect(db_path, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
+        # The connection is shared by the sim loop and request threads
+        self._lock = threading.Lock()
         self._create_table()
 
     def _create_table(self):
@@ -58,6 +72,11 @@ class MissionLogger:
     # ------------------------------------------------------------------
     def log_event(self, event: MissionEvent):
         """Insert a single MissionEvent into the database."""
+        with self._lock:
+            self._insert(event)
+            self._conn.commit()
+
+    def _insert(self, event: MissionEvent):
         self._conn.execute(
             "INSERT INTO events (timestamp, event_type, asset_id, domain, data, created_at) "
             "VALUES (?, ?, ?, ?, ?, ?)",
@@ -66,11 +85,10 @@ class MissionLogger:
                 event.event_type,
                 event.asset_id,
                 event.domain.value if event.domain else None,
-                json.dumps(event.data),
+                json.dumps(event.data, default=str),
                 event.created_at.isoformat(),
             ),
         )
-        self._conn.commit()
 
     # ------------------------------------------------------------------
     # Convenience loggers
@@ -99,6 +117,44 @@ class MissionLogger:
             data={"mode": mode.value, "noise_meters": noise_meters},
         ))
 
+    def log_comms_change(self, mode: str, autonomous_actions: List[str]):
+        """Log a comms mode change and the standing orders it triggered."""
+        self.log_event(MissionEvent(
+            timestamp=time.time(),
+            event_type="comms_change",
+            data={"mode": mode, "autonomous_actions": list(autonomous_actions)},
+        ))
+
+    def log_reset(self):
+        """Mark a fleet reset, so a replay can tell sessions apart."""
+        self.log_event(MissionEvent(
+            timestamp=time.time(), event_type="reset", data={},
+        ))
+
+    def log_decisions(self, entries: Iterable):
+        """Log autonomous decisions (DecisionEntry objects) in one transaction."""
+        events = [
+            MissionEvent(timestamp=e.timestamp, event_type="decision",
+                         data=self._decision_data(e))
+            for e in entries
+        ]
+        with self._lock:
+            for event in events:
+                self._insert(event)
+            self._conn.commit()
+
+    @staticmethod
+    def _decision_data(entry) -> dict:
+        """Same keys as /api/decisions, plus any extra fields the entry carries."""
+        data = {"id": entry.id}
+        for field, key in _DECISION_KEYS.items():
+            data[key] = getattr(entry, field, None)
+        if dataclasses.is_dataclass(entry):
+            for field, value in dataclasses.asdict(entry).items():
+                if field != "timestamp" and field not in _DECISION_KEYS:
+                    data.setdefault(field, value)
+        return data
+
     # ------------------------------------------------------------------
     # Query
     # ------------------------------------------------------------------
@@ -109,8 +165,13 @@ class MissionLogger:
         start_time: Optional[float] = None,
         end_time: Optional[float] = None,
         limit: int = 1000,
+        newest: bool = False,
     ) -> List[MissionEvent]:
-        """Query logged events with optional filters."""
+        """Query logged events with optional filters.
+
+        Results are always oldest-first. With newest=True the limit keeps
+        the most recent events instead of the earliest ones.
+        """
         clauses: List[str] = []
         params: list = []
 
@@ -118,8 +179,14 @@ class MissionLogger:
             clauses.append("event_type = ?")
             params.append(event_type)
         if asset_id is not None:
-            clauses.append("asset_id = ?")
-            params.append(asset_id)
+            # Commands, state snapshots and decisions name their assets in
+            # data.assets (objects with asset_id, or plain IDs for decisions)
+            clauses.append(
+                "(asset_id = ? OR EXISTS (SELECT 1 FROM json_each(events.data, '$.assets') j "
+                "WHERE CASE j.type WHEN 'object' THEN json_extract(j.value, '$.asset_id') "
+                "ELSE j.value END = ?))"
+            )
+            params.extend([asset_id, asset_id])
         if start_time is not None:
             clauses.append("timestamp >= ?")
             params.append(start_time)
@@ -128,21 +195,41 @@ class MissionLogger:
             params.append(end_time)
 
         where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
-        sql = f"SELECT * FROM events{where} ORDER BY timestamp ASC LIMIT ?"
+        if newest:
+            sql = (f"SELECT * FROM (SELECT * FROM events{where} "
+                   f"ORDER BY timestamp DESC, id DESC LIMIT ?) "
+                   f"ORDER BY timestamp ASC, id ASC")
+        else:
+            sql = f"SELECT * FROM events{where} ORDER BY timestamp ASC, id ASC LIMIT ?"
         params.append(limit)
 
-        rows = self._conn.execute(sql, params).fetchall()
+        with self._lock:
+            rows = self._conn.execute(sql, params).fetchall()
         return [self._row_to_event(r) for r in rows]
 
     def count_events(self, event_type: Optional[str] = None) -> int:
         """Count events, optionally filtered by type."""
-        if event_type:
-            row = self._conn.execute(
-                "SELECT COUNT(*) FROM events WHERE event_type = ?", (event_type,)
-            ).fetchone()
-        else:
-            row = self._conn.execute("SELECT COUNT(*) FROM events").fetchone()
+        with self._lock:
+            if event_type:
+                row = self._conn.execute(
+                    "SELECT COUNT(*) FROM events WHERE event_type = ?", (event_type,)
+                ).fetchone()
+            else:
+                row = self._conn.execute("SELECT COUNT(*) FROM events").fetchone()
         return row[0]
+
+    def time_span(self) -> Tuple[Optional[float], Optional[float]]:
+        """Timestamps of the first and last logged events (None if empty)."""
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT MIN(timestamp), MAX(timestamp) FROM events"
+            ).fetchone()
+        return row[0], row[1]
+
+    def duration_seconds(self) -> float:
+        """Seconds between the first and last logged events."""
+        first, last = self.time_span()
+        return round(last - first, 2) if first is not None else 0.0
 
     # ------------------------------------------------------------------
     # Internals

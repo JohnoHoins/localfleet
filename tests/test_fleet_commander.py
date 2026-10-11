@@ -283,7 +283,7 @@ def test_dispatch_summary_in_response(mock_parse):
     resp = fc.handle_text("patrol with alpha and ghost")
 
     assert resp.success is True
-    # error field used for warnings when success=True
-    assert resp.error is not None
-    assert "ghost" in resp.error
-    assert "clamped" in resp.error
+    # Warnings have their own field; error is only for failures
+    assert resp.error is None
+    assert any("ghost" in w for w in resp.warnings)
+    assert any("clamped" in w for w in resp.warnings)

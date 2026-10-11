@@ -104,11 +104,16 @@ def test_escort_follows():
     # Step to trigger escort update
     for _ in range(20):
         fm.step(0.25)
-    # Target has moved — last waypoint should track it
+    # Target has moved — each vessel steers along its screening station's
+    # track (alpha takes the bow station, 200m ahead of the target)
     contact = fm.contacts["tgt-1"]
     from src.fleet.fleet_manager import METERS_TO_NMI
-    wpts_x_last = fm.vessels["alpha"]["waypoints_x"][-1]
-    assert abs(wpts_x_last - contact.x * METERS_TO_NMI) < 0.01
+    wp_x = fm.vessels["alpha"]["waypoints_x"][-1] / METERS_TO_NMI
+    wp_y = fm.vessels["alpha"]["waypoints_y"][-1] / METERS_TO_NMI
+    # Station refreshes once a second, so allow one second of target motion
+    assert abs(wp_y - contact.y) < 5.0
+    assert wp_x > contact.x + 200.0 - 5.0
+    assert fm.vessels["alpha"]["status"] == AssetStatus.EXECUTING
 
 
 def test_escort_holds_on_remove():

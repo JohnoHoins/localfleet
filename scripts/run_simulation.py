@@ -7,11 +7,12 @@ all WebSocket state frames, decisions, and mission logs to data files.
 
 Usage:
     # Start backend + dashboard first, then:
-    .venv/bin/python scripts/run_simulation.py
+    .venv/bin/python scripts/run_simulation.py [--base-url http://localhost:8000]
 
-Requires: requests, websocket-client
+Requires: requests, websocket-client (both in requirements.txt)
 """
 
+import argparse
 import json
 import math
 import os
@@ -638,6 +639,13 @@ def phase_13(ws, start_time, snapshots_file, decisions_file, mission_log_file):
 # ---------------------------------------------------------------------------
 
 def main():
+    global BASE_URL, WS_URL
+    parser = argparse.ArgumentParser(description="LocalFleet full-spectrum simulation")
+    parser.add_argument("--base-url", default=BASE_URL,
+                        help="backend URL (default: %(default)s)")
+    BASE_URL = parser.parse_args().base_url.rstrip("/")
+    WS_URL = BASE_URL.replace("http", "ws", 1) + "/ws"
+
     # Create data directory
     DATA_DIR.mkdir(parents=True, exist_ok=True)
 
