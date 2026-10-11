@@ -66,20 +66,12 @@ class MissionReplay:
         states = self._logger.count_events("state")
         gps_changes = self._logger.count_events("gps_change")
 
-        all_events = self._logger.get_events(limit=1)
-        first_ts = all_events[0].timestamp if all_events else None
-
-        last_events = self._logger.get_events(limit=100000)
-        last_ts = last_events[-1].timestamp if last_events else None
-
-        duration = (last_ts - first_ts) if (first_ts and last_ts) else 0.0
-
         return {
             "total_events": total,
             "commands": commands,
             "state_snapshots": states,
             "gps_changes": gps_changes,
-            "duration_seconds": round(duration, 2),
+            "duration_seconds": self._logger.duration_seconds(),
         }
 
     def close(self):

@@ -5,6 +5,7 @@ comms/GPS mode, decision log, and performance counters.
 """
 import asyncio
 import time
+from collections import Counter
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
@@ -13,17 +14,18 @@ from src.llm import ollama_client
 
 
 MONITOR_INTERVAL = 0.5  # 2Hz
-OLLAMA_CHECK_INTERVAL = 10.0  # seconds between Ollama reachability checks
+OLLAMA_CHECK_INTERVAL = 10.0  # seconds between Ollama model status checks
 
 
-async def _ollama_status(app) -> bool:
-    """Cached Ollama reachability, refreshed at most every 10s."""
+async def _ollama_status(app) -> str:
+    """Cached status of the configured model ('loaded', 'cold', 'missing'
+    or 'offline'), refreshed at most every 10s."""
     now = time.time()
     checked = getattr(app.state, "ollama_checked_at", 0.0)
     if now - checked >= OLLAMA_CHECK_INTERVAL:
         app.state.ollama_checked_at = now
-        app.state.ollama_up = await asyncio.to_thread(ollama_client.test_connection)
-    return getattr(app.state, "ollama_up", False)
+        app.state.ollama_status = await asyncio.to_thread(ollama_client.model_status)
+    return getattr(app.state, "ollama_status", "offline")
 
 
 def create_monitor_router() -> APIRouter:
@@ -40,29 +42,21 @@ def create_monitor_router() -> APIRouter:
                 fm = commander.fleet_manager
 
                 # --- Simulation stats ---
-                executing = sum(
-                    1 for v in fm.vessels.values()
-                    if v["status"].value == "executing"
-                )
-                idle = sum(
-                    1 for v in fm.vessels.values()
-                    if v["status"].value == "idle"
-                )
-                # Count drone too
-                if fm.drone.status.value == "executing":
-                    executing += 1
-                else:
-                    idle += 1
+                # Count every asset (drone too) by its actual status
+                statuses = Counter(v["status"].value for v in fm.vessels.values())
+                statuses[fm.drone.status.value] += 1
 
                 time_scale = getattr(websocket.app.state, "time_scale", 1)
+                # Wall time of one 4Hz tick, i.e. all time_scale sub-steps
                 step_time_us = getattr(websocket.app.state, "last_step_time_us", 0)
 
                 sim_data = {
                     "tick_count": getattr(websocket.app.state, "tick_count", 0),
                     "time_scale": time_scale,
                     "dt": 0.25,
-                    "assets_executing": executing,
-                    "assets_idle": idle,
+                    "assets_executing": statuses["executing"],
+                    "assets_returning": statuses["returning"],
+                    "assets_idle": statuses["idle"],
                 }
 
                 # --- Command parser state ---
@@ -73,6 +67,7 @@ def create_monitor_router() -> APIRouter:
                     "parse_time_ms": pi["time_ms"] if pi else None,
                     "mission_type": pi["mission"] if pi else None,
                     "formation": pi["formation"] if pi else None,
+                    "error": pi.get("error") if pi else None,
                 }
 
                 # --- Threats ---
@@ -131,10 +126,13 @@ def create_monitor_router() -> APIRouter:
 
                 # --- Performance ---
                 ws_clients = getattr(websocket.app.state, "ws_client_count", 0)
+                ollama_status = await _ollama_status(websocket.app)
                 perf_data = {
                     "ws_clients": ws_clients,
                     "step_time_us": step_time_us,
-                    "ollama_loaded": await _ollama_status(websocket.app),
+                    "substep_time_us": step_time_us // max(1, time_scale),
+                    "ollama_loaded": ollama_status == "loaded",
+                    "ollama_status": ollama_status,
                     "ollama_model": ollama_client.MODEL,
                 }
 

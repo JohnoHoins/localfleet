@@ -10,8 +10,8 @@ v2.0 Changes:
 - GPS-denied degradation fields
 - DronePattern enum for aerial behaviors
 """
-from pydantic import BaseModel, Field
-from typing import List, Optional
+from pydantic import BaseModel, Field, field_validator
+from typing import List, Literal, Optional
 from enum import Enum
 from datetime import datetime
 
@@ -86,6 +86,19 @@ class AssetCommand(BaseModel):
     behavior: str = "waypoint"  # "waypoint", "loiter", "search", "orbit", "sweep", "track"
     drone_pattern: Optional[DronePattern] = None  # Only for AIR domain
 
+CommsLostBehavior = Literal["return_to_base", "hold_position", "continue_mission"]
+
+# Phrasings the LLM (or an operator) may use for each standing order
+_COMMS_LOST_ALIASES = {
+    "return to base": "return_to_base", "rtb": "return_to_base",
+    "return": "return_to_base", "return home": "return_to_base",
+    "go home": "return_to_base",
+    "hold position": "hold_position", "hold": "hold_position",
+    "hold station": "hold_position",
+    "continue mission": "continue_mission", "continue": "continue_mission",
+}
+
+
 class FleetCommand(BaseModel):
     """
     THE central command object. The LLM produces this from natural
@@ -97,8 +110,19 @@ class FleetCommand(BaseModel):
     formation: FormationType = FormationType.INDEPENDENT
     spacing_meters: float = 200.0
     colregs_compliance: bool = True
-    comms_lost_behavior: str = "return_to_base"
+    # Standing orders on comms loss. None = keep the current standing orders.
+    comms_lost_behavior: Optional[CommsLostBehavior] = None
     raw_text: Optional[str] = None
+
+    @field_validator("comms_lost_behavior", mode="before")
+    @classmethod
+    def _normalize_comms_lost_behavior(cls, v):
+        """Map 'HOLD_POSITION', 'hold position', 'rtb', ... to the canonical
+        value; anything unrecognised means 'no change' (None)."""
+        if not isinstance(v, str):
+            return None
+        key = " ".join(v.strip().lower().replace("_", " ").replace("-", " ").split())
+        return _COMMS_LOST_ALIASES.get(key)
 
 
 # ============================================================
@@ -158,7 +182,7 @@ class FleetState(BaseModel):
 class MissionEvent(BaseModel):
     """A logged event for mission replay."""
     timestamp: float
-    event_type: str             # "command", "state", "decision", "risk", "gps_change"
+    event_type: str             # "command", "state", "decision", "risk", "gps_change", "comms_change", "reset"
     asset_id: Optional[str] = None
     domain: Optional[DomainType] = None
     data: dict
@@ -178,11 +202,13 @@ class CommandResponse(BaseModel):
     """POST /api/command — what the server responds with."""
     success: bool
     fleet_command: Optional[FleetCommand] = None
-    error: Optional[str] = None
+    error: Optional[str] = None             # only set when success is False
+    warnings: List[str] = []                # every adjustment validation made
+    transcript: Optional[str] = None        # what Whisper heard (voice commands)
     llm_response_time_ms: Optional[float] = None
 
 class GpsDeniedRequest(BaseModel):
     """POST /api/gps-mode — toggle GPS degradation."""
     mode: GpsMode
-    noise_meters: float = 25.0
-    update_rate_hz: float = 1.0
+    noise_meters: float = Field(25.0, ge=0, allow_inf_nan=False)
+    update_rate_hz: float = Field(1.0, gt=0, allow_inf_nan=False)
