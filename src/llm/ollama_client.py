@@ -6,15 +6,37 @@ import logging
 import os
 import threading
 import httpx
-from ollama import chat
+import ollama
 from src.schemas import FleetCommand
 
 logger = logging.getLogger(__name__)
 
-LLM_TIMEOUT_SECONDS = int(os.environ.get("LOCALFLEET_LLM_TIMEOUT", "30"))
+# Long enough for a 4-asset command on a warm 72B model. A timed-out request
+# is really closed (see _client), so Ollama aborts it and frees the slot.
+LLM_TIMEOUT_SECONDS = int(os.environ.get("LOCALFLEET_LLM_TIMEOUT", "60"))
+
+
+def _parse_keep_alive(value: str):
+    """Ollama wants a number of seconds (-1 = forever) or a duration string."""
+    try:
+        return int(value)
+    except ValueError:
+        return value
+
+
+# Keep the model in memory between commands. Ollama's default unloads it
+# after 5 minutes, and the next command then pays a cold load of the 72B model.
+KEEP_ALIVE = _parse_keep_alive(os.environ.get("LOCALFLEET_KEEP_ALIVE", "1h"))
 
 
 MODEL = os.environ.get("LOCALFLEET_MODEL", "qwen2.5:72b")
+
+# The default ollama client has no HTTP timeout: an abandoned request stays
+# open and Ollama keeps generating, blocking the next command. Both clients
+# honour OLLAMA_HOST.
+_client = ollama.Client(timeout=httpx.Timeout(LLM_TIMEOUT_SECONDS, connect=5.0))
+_status_client = ollama.Client(timeout=5.0)
+chat = _client.chat
 
 SYSTEM_PROMPT = """You are a multi-domain naval fleet command parser. Convert natural language into structured JSON.
 
@@ -38,13 +60,13 @@ CRITICAL RULES:
 7. Pick the best mission_type: patrol, search, escort, loiter, aerial_recon, intercept.
    - Use "intercept" when the user wants the fleet to converge on a target/contact position.
 8. If no formation specified, use "independent".
-9. comms_lost_behavior sets standing orders for comms loss. Values: "return_to_base" (default), "hold_position", "continue_mission". Only set if the user explicitly mentions standing orders or comms-loss behavior.
+9. comms_lost_behavior sets standing orders for comms loss. Values: "return_to_base", "hold_position", "continue_mission". Only set if the user explicitly mentions standing orders or comms-loss behavior; otherwise set it to null.
 
 STANDING ORDERS EXAMPLES:
   "patrol to 3000 0 in column with hold position standing orders" → comms_lost_behavior: "hold_position"
   "patrol to 2000 0 with continue mission standing orders" → comms_lost_behavior: "continue_mission"
   Phrases: "hold position standing orders", "continue mission on comms loss", "return to base standing orders"
-  If the user says nothing about standing orders → comms_lost_behavior: "return_to_base" (the default).
+  If the user says nothing about standing orders, set comms_lost_behavior to null — the current standing orders stay in force.
 
 DO NOT:
 - Create asset IDs that are not in the roster above. There is no "delta", "eagle-2", or "drone-1".
@@ -74,10 +96,31 @@ assets: [alpha(surface, waypoints:[{x:1500,y:800}], speed:5), bravo(surface, way
 def test_connection() -> bool:
     """Ping Ollama to verify it's running."""
     try:
-        r = httpx.get("http://localhost:11434/api/tags", timeout=5.0)
-        return r.status_code == 200
+        _status_client.list()
+        return True
     except Exception:
         return False
+
+
+def _model_key(name: str) -> str:
+    """'qwen2.5' and 'qwen2.5:latest' name the same model."""
+    return name if ":" in name else f"{name}:latest"
+
+
+def model_status() -> str:
+    """Status of the configured MODEL: 'loaded' (in memory), 'cold' (pulled
+    but not loaded), 'missing' (not pulled) or 'offline' (Ollama not running)."""
+    if not test_connection():
+        return "offline"
+    try:
+        want = _model_key(MODEL)
+        pulled = {_model_key(m.model or "") for m in _status_client.list().models}
+        if want not in pulled:
+            return "missing"
+        loaded = {_model_key(m.model or "") for m in _status_client.ps().models}
+        return "loaded" if want in loaded else "cold"
+    except Exception:
+        return "offline"
 
 
 class LLMTimeoutError(Exception):
@@ -97,12 +140,18 @@ def _chat_with_timeout(messages, timeout_seconds=LLM_TIMEOUT_SECONDS, temperatur
                 messages=messages,
                 format=FleetCommand.model_json_schema(),
                 options={"temperature": temperature},
+                keep_alive=KEEP_ALIVE,
+            )
+        except httpx.TimeoutException:
+            error["exc"] = LLMTimeoutError(
+                f"LLM inference timed out after {timeout_seconds}s"
             )
         except Exception as e:
             error["exc"] = e
 
     thread = threading.Thread(target=_run, daemon=True)
     thread.start()
+    # Stop waiting here; the client's HTTP timeout closes the request itself
     thread.join(timeout=timeout_seconds)
 
     if thread.is_alive():
