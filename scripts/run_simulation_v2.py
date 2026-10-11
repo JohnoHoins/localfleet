@@ -2,16 +2,20 @@
 """
 LocalFleet V2 Deep-Diagnostic Simulation Orchestrator
 
-Runs 21 isolated tests with clean resets between each. Captures all WebSocket
-frames, decisions, and snapshots to data/ for offline analysis.
+Runs 21 isolated tests; each starts from a fresh fleet via POST /api/reset.
+Captures all WebSocket frames, decisions, and snapshots to data/ for offline
+analysis.
 
 Usage:
     # Start backend first:
     .venv/bin/python -m uvicorn src.api.server:app --host 127.0.0.1 --port 8000
     # Then run:
-    .venv/bin/python scripts/run_simulation_v2.py
+    .venv/bin/python scripts/run_simulation_v2.py [--base-url http://localhost:8000]
+
+Requires: requests, websocket-client (both in requirements.txt)
 """
 
+import argparse
 import json
 import math
 import os
@@ -39,8 +43,10 @@ HOME_POSITIONS = {
     "eagle-1": (200, -100),
 }
 
-RESET_TIMEOUT = 120  # max seconds to wait for assets to reach home
+RESET_TIMEOUT = 10  # max seconds to wait for the stream to show the reset fleet
 RESET_IDLE_THRESHOLD = 50  # meters from home to consider "at home"
+
+POLLER = None  # DecisionPoller, set in main(); flushed before each reset
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -195,22 +201,25 @@ class DecisionPoller:
 
     def _run(self):
         while not self._stop.is_set():
-            self._poll()
+            self.poll()
             self._stop.wait(5.0)
 
-    def _poll(self):
+    def poll(self):
         result = api("GET", "/api/decisions", params={"limit": 50})
         if not result or "decisions" not in result:
             return
+        # Lock also serializes with poll() calls from reset_cycle
         with self._lock:
             test_id = self.current_test_id
-        for d in result["decisions"]:
-            did = d.get("id") or d.get("timestamp", "")
-            if did not in self.seen_ids:
-                self.seen_ids.add(did)
-                entry = {"test": test_id, "wall_clock": time.time(), "decision": d}
-                self._file.write(json.dumps(entry) + "\n")
-                self._file.flush()
+            for d in result["decisions"]:
+                # Each /api/reset starts a new decision log whose ids may repeat,
+                # so key on the timestamp as well
+                did = f"{d.get('id')}@{d.get('timestamp')}"
+                if did not in self.seen_ids:
+                    self.seen_ids.add(did)
+                    entry = {"test": test_id, "wall_clock": time.time(), "decision": d}
+                    self._file.write(json.dumps(entry) + "\n")
+                    self._file.flush()
 
     def set_test(self, test_id: str):
         with self._lock:
@@ -248,36 +257,23 @@ def snapshot(test_id: str, label: str, snap_file):
 # ---------------------------------------------------------------------------
 
 def reset_cycle(ws: WSCapture, run_start: float, snap_file):
-    """Full reset between tests: remove contacts, restore GPS/comms, RTB, wait idle."""
+    """Full reset between tests: POST /api/reset replaces the fleet (assets
+    home and idle, no contacts, GPS/comms full), then wait for the stream."""
     print(f"  [{elapsed_str(run_start)}] RESET: cleaning up...")
 
-    # 1. Remove all contacts
-    contacts = api("GET", "/api/contacts")
-    if contacts and isinstance(contacts, list):
-        for c in contacts:
-            cid = c.get("contact_id", "")
-            if cid:
-                api("DELETE", f"/api/contacts/{cid}")
-    elif contacts and isinstance(contacts, dict) and "contacts" in contacts:
-        for c in contacts["contacts"]:
-            cid = c.get("contact_id", "")
-            if cid:
-                api("DELETE", f"/api/contacts/{cid}")
+    # The reset discards the decision log; record its last entries first
+    if POLLER:
+        POLLER.poll()
 
-    # 2. Restore GPS
-    api("POST", "/api/gps-mode", {"mode": "full"})
+    result = api("POST", "/api/reset")
+    if not (result or {}).get("success"):
+        print(f"  [{elapsed_str(run_start)}] RESET: /api/reset failed: {result}")
 
-    # 3. Restore comms
-    api("POST", "/api/comms-mode", {"mode": "full"})
-
-    # 4. Issue RTB
-    time.sleep(0.5)  # Let comms restore take effect
-    api("POST", "/api/return-to-base")
-
-    # 5. Wait for all assets to reach idle near home
+    # Wait until the WebSocket stream shows all assets idle at home
     deadline = time.time() + RESET_TIMEOUT
     all_home = False
     while time.time() < deadline:
+        time.sleep(0.5)
         state = ws.state
         if state:
             assets = state.get("assets", [])
@@ -293,14 +289,13 @@ def reset_cycle(ws: WSCapture, run_start: float, snap_file):
             if idle_home >= 4:
                 all_home = True
                 break
-        time.sleep(1.0)
 
     if all_home:
         print(f"  [{elapsed_str(run_start)}] RESET: all assets home and idle")
     else:
         print(f"  [{elapsed_str(run_start)}] RESET: TIMEOUT — forcing proceed (some assets not home)")
 
-    # 7. Snapshot baseline
+    # Snapshot baseline
     snapshot("RESET", "post_reset", snap_file)
     time.sleep(0.5)
 
@@ -768,16 +763,17 @@ def test_11_comms_auto_engage(ws, run_start, snap_file):
 
     time.sleep(10)
 
-    # Spawn threat
+    # Spawn threat close enough to be critical when comms drop, so the
+    # 60s escalation can fire (from (3000, 0) it never gets past warning)
     heading_nw = compass_to_math_rad(315)  # NW
     api("POST", "/api/contacts", {
         "contact_id": "bogey-auto",
-        "x": 3000, "y": 0,
+        "x": 2200, "y": 0,
         "heading": heading_nw,
         "speed": 4.0,
         "domain": "surface",
     })
-    print(f"  [{elapsed_str(run_start)}] Spawned bogey-auto at (3000, 0) heading NW @ 4 m/s")
+    print(f"  [{elapsed_str(run_start)}] Spawned bogey-auto at (2200, 0) heading NW @ 4 m/s")
 
     time.sleep(5)
 
@@ -1138,6 +1134,13 @@ def test_20_endurance(ws, run_start, snap_file):
 # ---------------------------------------------------------------------------
 
 def main():
+    global BASE_URL, WS_URL, POLLER
+    parser = argparse.ArgumentParser(description="LocalFleet V2 deep-diagnostic simulation")
+    parser.add_argument("--base-url", default=BASE_URL,
+                        help="backend URL (default: %(default)s)")
+    BASE_URL = parser.parse_args().base_url.rstrip("/")
+    WS_URL = BASE_URL.replace("http", "ws", 1) + "/ws"
+
     DATA_DIR.mkdir(parents=True, exist_ok=True)
 
     capture_path = DATA_DIR / "sim_v2_capture.jsonl"
@@ -1172,7 +1175,7 @@ def main():
         print("WARNING: No WebSocket frames received yet. Continuing anyway...")
 
     # Start decision poller
-    poller = DecisionPoller(decisions_path)
+    poller = POLLER = DecisionPoller(decisions_path)
     poller.start()
 
     run_start = time.time()
