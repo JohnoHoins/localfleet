@@ -1,8 +1,19 @@
-import { MapContainer, TileLayer, Marker, Popup, Circle, Polyline, Polygon, useMap } from 'react-leaflet'
+import { MapContainer, TileLayer, Marker, Popup, Circle, Polyline, Polygon, ScaleControl, useMap } from 'react-leaflet'
 import L from 'leaflet'
-import { useEffect, useMemo } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { closingTrend, pickTarget, surfaceCentroid } from '../lib/threat'
+
+// The map is offline-first: the coastline below is drawn locally, so it works
+// air-gapped. OSM tiles are an optional online layer (VITE_ONLINE_TILES=true
+// starts with them on); while shown, every pan/zoom requests tiles from OSM.
+const ONLINE_TILES_DEFAULT = import.meta.env.VITE_ONLINE_TILES === 'true'
+const OSM_ATTRIBUTION = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+
+// Asset labels overlap when zoomed out; below this zoom only hovering shows the name
+const LABEL_MIN_ZOOM = 15
 
 // Convert meters (local frame) to lat/lng. Origin ~42°N.
+// Must match src/navigation/land_check.py.
 const ORIGIN_LAT = 42.0
 const ORIGIN_LNG = -70.0
 const M_PER_DEG_LAT = 111320
@@ -25,7 +36,7 @@ function createIcon(domain, heading, label) {
       style="transform:rotate(${heading}deg);filter:drop-shadow(0 0 3px ${color})">
       ${shape}
     </svg>
-    <span style="font-size:9px;color:${color};font-weight:bold;text-shadow:0 0 4px #000,0 0 4px #000;white-space:nowrap;margin-top:2px">${label}</span>
+    <span class="asset-label" style="font-size:9px;color:${color};font-weight:bold;text-shadow:0 0 4px #000,0 0 4px #000;white-space:nowrap;margin-top:2px">${label}</span>
   </div>`
 
   return L.divIcon({
@@ -64,7 +75,8 @@ function createContactIcon(heading, label, threatLevel) {
   })
 }
 
-// Cape Cod coastline polygon (lat, lng) from land_check.py
+// Cape Cod coastline polygon (lat, lng) — a copy of _CAPE_COD_LATLNG in
+// src/navigation/land_check.py; keep the two in sync.
 const CAPE_COD_LATLNG = [
   [41.74, -70.62], [41.67, -70.52], [41.63, -70.30], [41.65, -70.00],
   [41.67, -69.95], [41.70, -69.94], [41.80, -69.96], [41.88, -69.97],
@@ -74,13 +86,30 @@ const CAPE_COD_LATLNG = [
   [41.73, -70.20], [41.73, -70.40], [41.76, -70.55], [41.77, -70.62],
 ]
 
-function FitBounds({ assets }) {
+// Frame the fleet (and any contacts) once, on the first frame that has assets.
+// maxZoom keeps the operating area around the fleet in view.
+function FitBounds({ assets, contacts }) {
+  const map = useMap()
+  const fitted = useRef(false)
+  useEffect(() => {
+    if (fitted.current || !assets.length) return
+    fitted.current = true
+    const points = [...assets, ...contacts].map((p) => metersToLatLng(p.x, p.y))
+    map.fitBounds(L.latLngBounds(points).pad(0.5), { padding: [80, 80], maxZoom: 15 })
+  }, [assets, contacts, map])
+  return null
+}
+
+function LabelDeclutter() {
   const map = useMap()
   useEffect(() => {
-    if (!assets?.length) return
-    const bounds = assets.map((a) => metersToLatLng(a.x, a.y))
-    map.fitBounds(bounds, { padding: [80, 80], maxZoom: 18 })
-  }, []) // eslint-disable-line react-hooks/exhaustive-deps -- fit once on mount
+    const update = () => {
+      map.getContainer().classList.toggle('hide-asset-labels', map.getZoom() < LABEL_MIN_ZOOM)
+    }
+    update()
+    map.on('zoomend', update)
+    return () => { map.off('zoomend', update) }
+  }, [map])
   return null
 }
 
@@ -113,7 +142,8 @@ function createInterceptIcon() {
   return L.divIcon({ html, className: '', iconSize: [20, 20], iconAnchor: [10, 10] })
 }
 
-export default function FleetMap({ assets, trails = {}, contacts = [], contactTrails = {}, activeMission = null, threatAssessments = [], autonomy = {} }) {
+export default function FleetMap({ assets, trails = {}, contacts = [], contactTrails = {}, activeMission = null, threatAssessments = [], autonomy = {}, recommendedTarget = null }) {
+  const [onlineTiles, setOnlineTiles] = useState(ONLINE_TILES_DEFAULT)
   const center = useMemo(() => {
     if (!assets?.length) return [ORIGIN_LAT, ORIGIN_LNG]
     const avgX = assets.reduce((s, a) => s + a.x, 0) / assets.length
@@ -124,207 +154,217 @@ export default function FleetMap({ assets, trails = {}, contacts = [], contactTr
   if (!assets) return null
 
   return (
-    <MapContainer center={center} zoom={14} className="h-full w-full" zoomControl={false}>
-      <TileLayer
-        url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-        attribution=""
-        className="dark-map-tiles"
-      />
-      <FitBounds assets={assets} />
-
-      {/* Coastline overlay */}
-      <Polygon
-        positions={CAPE_COD_LATLNG}
-        pathOptions={{ color: '#92400e', fillColor: '#92400e', fillOpacity: 0.15, weight: 1.5 }}
-      />
-
-      {/* Threat detection range rings — only when contacts exist */}
-      {contacts.length > 0 && assets.length > 0 && (() => {
-        const surfaceAssets = assets.filter(a => a.domain === 'surface')
-        const src = surfaceAssets.length > 0 ? surfaceAssets : assets
-        const cX = src.reduce((s, a) => s + a.x, 0) / src.length
-        const cY = src.reduce((s, a) => s + a.y, 0) / src.length
-        const centroid = metersToLatLng(cX, cY)
-        return (
-          <>
-            <Circle center={centroid} radius={8000}
-              pathOptions={{ color: '#eab308', fillOpacity: 0, weight: 0.5, dashArray: '8 4', opacity: 0.3 }} />
-            <Circle center={centroid} radius={5000}
-              pathOptions={{ color: '#f97316', fillOpacity: 0, weight: 0.8, dashArray: '6 3', opacity: 0.4 }} />
-            <Circle center={centroid} radius={2000}
-              pathOptions={{ color: '#ef4444', fillOpacity: 0, weight: 1, dashArray: '4 2', opacity: 0.5 }} />
-          </>
-        )
-      })()}
-
-      {/* Asset trail lines */}
-      {assets.map((asset) => {
-        const trail = trails[asset.asset_id]
-        if (!trail || trail.length < 2) return null
-        const positions = trail.map(([x, y]) => metersToLatLng(x, y))
-        return (
-          <Polyline
-            key={`trail-${asset.asset_id}`}
-            positions={positions}
-            pathOptions={{
-              color: TRAIL_COLORS[asset.domain] || '#3b82f680',
-              weight: 2,
-              dashArray: asset.domain === 'air' ? '6 4' : undefined,
-            }}
+    <div className="relative h-full w-full">
+      <MapContainer center={center} zoom={14} className="h-full w-full" zoomControl={false}>
+        {onlineTiles && (
+          <TileLayer
+            url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+            attribution={OSM_ATTRIBUTION}
+            className="dark-map-tiles"
           />
-        )
-      })}
+        )}
+        <FitBounds assets={assets} contacts={contacts} />
+        <LabelDeclutter />
+        <ScaleControl position="bottomleft" imperial={false} />
 
-      {/* Contact trail lines */}
-      {contacts.map((contact) => {
-        const trail = contactTrails[contact.contact_id]
-        if (!trail || trail.length < 2) return null
-        const positions = trail.map(([x, y]) => metersToLatLng(x, y))
-        return (
-          <Polyline
-            key={`ctrail-${contact.contact_id}`}
-            positions={positions}
-            pathOptions={{ color: '#ef444480', weight: 2, dashArray: '4 4' }}
-          />
-        )
-      })}
+        {/* Coastline — local data, always drawn (works with no basemap) */}
+        <Polygon
+          positions={CAPE_COD_LATLNG}
+          pathOptions={{ color: '#b45309', fillColor: '#92400e', fillOpacity: 0.3, weight: 1.5 }}
+        />
 
-      {/* Fleet-to-contact line + intercept geometry */}
-      {contacts.length > 0 && assets.length > 0 && (() => {
-        const surfaceAssets = assets.filter(a => a.domain === 'surface')
-        const avgX = surfaceAssets.length > 0
-          ? surfaceAssets.reduce((s, a) => s + a.x, 0) / surfaceAssets.length
-          : assets.reduce((s, a) => s + a.x, 0) / assets.length
-        const avgY = surfaceAssets.length > 0
-          ? surfaceAssets.reduce((s, a) => s + a.y, 0) / surfaceAssets.length
-          : assets.reduce((s, a) => s + a.y, 0) / assets.length
-        const c = contacts[0]
-        const intercept = (activeMission === 'intercept' && c.speed > 0)
-          ? computeInterceptPoint(avgX, avgY, 8.0, c.x, c.y, c.heading, c.speed)
-          : null
-        return (
-          <>
+        {/* Threat detection range rings — only when contacts exist */}
+        {contacts.length > 0 && assets.length > 0 && (() => {
+          const { x: cX, y: cY } = surfaceCentroid(assets)
+          const centroid = metersToLatLng(cX, cY)
+          return (
+            <>
+              <Circle center={centroid} radius={8000}
+                pathOptions={{ color: '#eab308', fillOpacity: 0, weight: 0.5, dashArray: '8 4', opacity: 0.3 }} />
+              <Circle center={centroid} radius={5000}
+                pathOptions={{ color: '#f97316', fillOpacity: 0, weight: 0.8, dashArray: '6 3', opacity: 0.4 }} />
+              <Circle center={centroid} radius={2000}
+                pathOptions={{ color: '#ef4444', fillOpacity: 0, weight: 1, dashArray: '4 2', opacity: 0.5 }} />
+            </>
+          )
+        })()}
+
+        {/* Asset trail lines */}
+        {assets.map((asset) => {
+          const trail = trails[asset.asset_id]
+          if (!trail || trail.length < 2) return null
+          const positions = trail.map(([x, y]) => metersToLatLng(x, y))
+          return (
             <Polyline
-              positions={[metersToLatLng(avgX, avgY), metersToLatLng(c.x, c.y)]}
-              pathOptions={{ color: '#ef444440', weight: 1, dashArray: '2 6' }}
+              key={`trail-${asset.asset_id}`}
+              positions={positions}
+              pathOptions={{
+                color: TRAIL_COLORS[asset.domain] || '#3b82f680',
+                weight: 2,
+                dashArray: asset.domain === 'air' ? '6 4' : undefined,
+              }}
             />
-            {intercept && (
-              <>
-                <Polyline
-                  positions={[metersToLatLng(c.x, c.y), metersToLatLng(intercept[0], intercept[1])]}
-                  pathOptions={{ color: '#f59e0b80', weight: 1.5, dashArray: '4 4' }}
-                />
-                <Polyline
-                  positions={[metersToLatLng(avgX, avgY), metersToLatLng(intercept[0], intercept[1])]}
-                  pathOptions={{ color: '#f59e0b60', weight: 1, dashArray: '6 4' }}
-                />
-                <Marker position={metersToLatLng(intercept[0], intercept[1])} icon={createInterceptIcon()} />
-              </>
-            )}
-          </>
-        )
-      })()}
+          )
+        })}
 
-      {/* Drone targeting line — yellow line when locked */}
-      {autonomy?.targeting?.locked && (() => {
-        const drone = assets.find(a => a.domain === 'air')
-        const targetContact = contacts.find(c => c.contact_id === autonomy.targeting.contact_id)
-        if (!drone || !targetContact) return null
-        return (
-          <Polyline
-            positions={[metersToLatLng(drone.x, drone.y), metersToLatLng(targetContact.x, targetContact.y)]}
-            pathOptions={{ color: '#eab308', weight: 2, dashArray: '6 3' }}
-          />
-        )
-      })()}
+        {/* Contact trail lines */}
+        {contacts.map((contact) => {
+          const trail = contactTrails[contact.contact_id]
+          if (!trail || trail.length < 2) return null
+          const positions = trail.map(([x, y]) => metersToLatLng(x, y))
+          return (
+            <Polyline
+              key={`ctrail-${contact.contact_id}`}
+              positions={positions}
+              pathOptions={{ color: '#ef444480', weight: 2, dashArray: '4 4' }}
+            />
+          )
+        })}
 
-      {/* Formation lines — connect surface vessels to show geometry */}
-      {(() => {
-        const surfaceAssets = assets.filter(a => a.domain === 'surface')
-        if (surfaceAssets.length < 2) return null
-        // Sort by asset_id for consistent ordering
-        const sorted = [...surfaceAssets].sort((a, b) => a.asset_id.localeCompare(b.asset_id))
-        const positions = sorted.map(a => metersToLatLng(a.x, a.y))
-        return (
-          <Polyline
-            positions={positions}
-            pathOptions={{ color: '#06b6d4', weight: 1, opacity: 0.3, dashArray: '4 6' }}
-          />
-        )
-      })()}
-
-      {/* Contact heading indicators — short line showing movement direction */}
-      {contacts.map((contact) => {
-        const pos = metersToLatLng(contact.x, contact.y)
-        const headLen = 80 // meters
-        const endX = contact.x + headLen * Math.cos(contact.heading)
-        const endY = contact.y + headLen * Math.sin(contact.heading)
-        const endPos = metersToLatLng(endX, endY)
-        return (
-          <Polyline
-            key={`chdg-${contact.contact_id}`}
-            positions={[pos, endPos]}
-            pathOptions={{ color: '#ef4444', weight: 2, opacity: 0.7 }}
-          />
-        )
-      })}
-
-      {/* Asset markers */}
-      {assets.map((asset) => {
-        const pos = metersToLatLng(asset.x, asset.y)
-        return (
-          <span key={asset.asset_id}>
-            {asset.gps_mode === 'denied' && (
-              <Circle
-                center={pos}
-                radius={asset.position_accuracy}
-                pathOptions={{ color: '#ef4444', fillColor: '#ef4444', fillOpacity: 0.08, weight: 1, dashArray: '4 3' }}
+        {/* Fleet-to-target line + intercept geometry (same target as MissionStatus) */}
+        {contacts.length > 0 && assets.length > 0 && (() => {
+          const { x: avgX, y: avgY } = surfaceCentroid(assets)
+          const c = pickTarget(contacts, threatAssessments, autonomy, recommendedTarget).contact
+          const intercept = (activeMission === 'intercept' && c.speed > 0)
+            ? computeInterceptPoint(avgX, avgY, 8.0, c.x, c.y, c.heading, c.speed)
+            : null
+          return (
+            <>
+              <Polyline
+                positions={[metersToLatLng(avgX, avgY), metersToLatLng(c.x, c.y)]}
+                pathOptions={{ color: '#ef444440', weight: 1, dashArray: '2 6' }}
               />
-            )}
-            <Marker position={pos} icon={createIcon(asset.domain, asset.heading, asset.asset_id.toUpperCase())}>
+              {intercept && (
+                <>
+                  <Polyline
+                    positions={[metersToLatLng(c.x, c.y), metersToLatLng(intercept[0], intercept[1])]}
+                    pathOptions={{ color: '#f59e0b80', weight: 1.5, dashArray: '4 4' }}
+                  />
+                  <Polyline
+                    positions={[metersToLatLng(avgX, avgY), metersToLatLng(intercept[0], intercept[1])]}
+                    pathOptions={{ color: '#f59e0b60', weight: 1, dashArray: '6 4' }}
+                  />
+                  <Marker position={metersToLatLng(intercept[0], intercept[1])} icon={createInterceptIcon()} />
+                </>
+              )}
+            </>
+          )
+        })()}
+
+        {/* Drone targeting line — yellow line when locked */}
+        {autonomy?.targeting?.locked && (() => {
+          const drone = assets.find(a => a.domain === 'air')
+          const targetContact = contacts.find(c => c.contact_id === autonomy.targeting.contact_id)
+          if (!drone || !targetContact) return null
+          return (
+            <Polyline
+              positions={[metersToLatLng(drone.x, drone.y), metersToLatLng(targetContact.x, targetContact.y)]}
+              pathOptions={{ color: '#eab308', weight: 2, dashArray: '6 3' }}
+            />
+          )
+        })()}
+
+        {/* Formation lines — connect surface vessels to show geometry */}
+        {(() => {
+          const surfaceAssets = assets.filter(a => a.domain === 'surface')
+          if (surfaceAssets.length < 2) return null
+          // Sort by asset_id for consistent ordering
+          const sorted = [...surfaceAssets].sort((a, b) => a.asset_id.localeCompare(b.asset_id))
+          const positions = sorted.map(a => metersToLatLng(a.x, a.y))
+          return (
+            <Polyline
+              positions={positions}
+              pathOptions={{ color: '#06b6d4', weight: 1, opacity: 0.3, dashArray: '4 6' }}
+            />
+          )
+        })()}
+
+        {/* Contact heading indicators — short line showing movement direction */}
+        {contacts.map((contact) => {
+          const pos = metersToLatLng(contact.x, contact.y)
+          const headLen = 80 // meters
+          const endX = contact.x + headLen * Math.cos(contact.heading)
+          const endY = contact.y + headLen * Math.sin(contact.heading)
+          const endPos = metersToLatLng(endX, endY)
+          return (
+            <Polyline
+              key={`chdg-${contact.contact_id}`}
+              positions={[pos, endPos]}
+              pathOptions={{ color: '#ef4444', weight: 2, opacity: 0.7 }}
+            />
+          )
+        })}
+
+        {/* Asset markers */}
+        {assets.map((asset) => {
+          const pos = metersToLatLng(asset.x, asset.y)
+          return (
+            <span key={asset.asset_id}>
+              {asset.gps_mode === 'denied' && (
+                <Circle
+                  center={pos}
+                  radius={asset.position_accuracy}
+                  pathOptions={{ color: '#ef4444', fillColor: '#ef4444', fillOpacity: 0.08, weight: 1, dashArray: '4 3' }}
+                />
+              )}
+              <Marker
+                position={pos}
+                icon={createIcon(asset.domain, asset.heading, asset.asset_id.toUpperCase())}
+                title={asset.asset_id.toUpperCase()}
+              >
+                <Popup className="c2-popup">
+                  <div className="text-xs" style={{ color: '#0b0f19' }}>
+                    <div className="font-bold text-sm">{asset.asset_id.toUpperCase()}</div>
+                    <div>{asset.domain.toUpperCase()} — {asset.status}</div>
+                    <div>SPD: {asset.speed.toFixed(1)} m/s HDG: {asset.heading.toFixed(0)}°</div>
+                    {asset.domain === 'air' && <div>ALT: {asset.altitude?.toFixed(0) ?? '—'} m</div>}
+                    {asset.risk_level > 0 && <div>RISK: {asset.risk_level.toFixed(2)}</div>}
+                    {asset.cpa != null && <div>CPA: {asset.cpa.toFixed(0)}m TCPA: {asset.tcpa?.toFixed(0)}s</div>}
+                    <div>GPS: {asset.gps_mode} (±{asset.position_accuracy.toFixed(0)}m)</div>
+                  </div>
+                </Popup>
+              </Marker>
+            </span>
+          )
+        })}
+
+        {/* Contact markers — color-coded by threat level */}
+        {contacts.map((contact) => {
+          const pos = metersToLatLng(contact.x, contact.y)
+          const nautHdg = ((90 - contact.heading * 180 / Math.PI) % 360 + 360) % 360
+          const ta = threatAssessments.find(t => t.contact_id === contact.contact_id)
+          const threatLevel = ta?.threat_level || 'none'
+          return (
+            <Marker
+              key={`contact-${contact.contact_id}`}
+              position={pos}
+              icon={createContactIcon(nautHdg, contact.contact_id.toUpperCase(), threatLevel)}
+            >
               <Popup className="c2-popup">
                 <div className="text-xs" style={{ color: '#0b0f19' }}>
-                  <div className="font-bold text-sm">{asset.asset_id.toUpperCase()}</div>
-                  <div>{asset.domain.toUpperCase()} — {asset.status}</div>
-                  <div>SPD: {asset.speed.toFixed(1)} m/s HDG: {asset.heading.toFixed(0)}°</div>
-                  {asset.domain === 'air' && <div>ALT: {asset.altitude?.toFixed(0) ?? '—'} m</div>}
-                  {asset.risk_level > 0 && <div>RISK: {asset.risk_level.toFixed(2)}</div>}
-                  {asset.cpa != null && <div>CPA: {asset.cpa.toFixed(0)}m TCPA: {asset.tcpa?.toFixed(0)}s</div>}
-                  <div>GPS: {asset.gps_mode} (±{asset.position_accuracy.toFixed(0)}m)</div>
+                  <div className="font-bold text-sm" style={{ color: THREAT_COLORS[threatLevel] || '#ef4444' }}>
+                    {contact.contact_id.toUpperCase()} — {threatLevel.toUpperCase()}
+                  </div>
+                  <div>CONTACT — {contact.domain?.toUpperCase() || 'SURFACE'}</div>
+                  <div>SPD: {contact.speed.toFixed(1)} m/s HDG: {nautHdg.toFixed(0)}°</div>
+                  {ta && <div>RANGE: {(ta.distance / 1000).toFixed(1)}km BRG: {ta.bearing_deg.toFixed(0)}°</div>}
+                  {ta && <div>{closingTrend(ta.closing_rate)}: {Math.abs(ta.closing_rate).toFixed(1)} m/s</div>}
+                  {ta && <div>ACTION: {ta.recommended_action.toUpperCase()}</div>}
                 </div>
               </Popup>
             </Marker>
-          </span>
-        )
-      })}
-
-      {/* Contact markers — color-coded by threat level */}
-      {contacts.map((contact) => {
-        const pos = metersToLatLng(contact.x, contact.y)
-        const nautHdg = ((90 - contact.heading * 180 / Math.PI) % 360 + 360) % 360
-        const ta = threatAssessments.find(t => t.contact_id === contact.contact_id)
-        const threatLevel = ta?.threat_level || 'none'
-        return (
-          <Marker
-            key={`contact-${contact.contact_id}`}
-            position={pos}
-            icon={createContactIcon(nautHdg, contact.contact_id.toUpperCase(), threatLevel)}
-          >
-            <Popup className="c2-popup">
-              <div className="text-xs" style={{ color: '#0b0f19' }}>
-                <div className="font-bold text-sm" style={{ color: THREAT_COLORS[threatLevel] || '#ef4444' }}>
-                  {contact.contact_id.toUpperCase()} — {threatLevel.toUpperCase()}
-                </div>
-                <div>CONTACT — {contact.domain?.toUpperCase() || 'SURFACE'}</div>
-                <div>SPD: {contact.speed.toFixed(1)} m/s HDG: {nautHdg.toFixed(0)}°</div>
-                {ta && <div>RANGE: {(ta.distance / 1000).toFixed(1)}km BRG: {ta.bearing_deg.toFixed(0)}°</div>}
-                {ta && <div>CLOSING: {ta.closing_rate.toFixed(1)} m/s</div>}
-                {ta && <div>ACTION: {ta.recommended_action.toUpperCase()}</div>}
-              </div>
-            </Popup>
-          </Marker>
-        )
-      })}
-    </MapContainer>
+          )
+        })}
+      </MapContainer>
+      <button
+        onClick={() => setOnlineTiles((on) => !on)}
+        title={onlineTiles
+          ? 'Hide the online basemap (stops requests to tile.openstreetmap.org)'
+          : 'Show the OpenStreetMap basemap — needs internet, sends the map view to tile.openstreetmap.org'}
+        className="absolute top-2 right-2 z-[1001] px-2 py-1 text-[10px] font-bold tracking-wider rounded border border-slate-600 bg-slate-900/80 text-slate-400 hover:text-slate-200"
+      >
+        BASEMAP: {onlineTiles ? 'OSM (ONLINE)' : 'OFFLINE'}
+      </button>
+    </div>
   )
 }

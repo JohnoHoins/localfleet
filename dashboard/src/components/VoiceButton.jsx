@@ -1,4 +1,5 @@
 import { useState, useRef, useCallback } from 'react'
+import { apiRequest } from '../lib/api'
 
 /** Encode Float32 PCM samples into a 16kHz mono WAV blob. */
 function encodeWav(samples, sampleRate) {
@@ -42,7 +43,8 @@ function encodeWav(samples, sampleRate) {
   return new Blob([buffer], { type: 'audio/wav' })
 }
 
-export default function VoiceButton({ onResult }) {
+/** onResult receives an apiRequest-style result: { ok, data, error }. */
+export default function VoiceButton({ onResult, commsDenied = false }) {
   const [recording, setRecording] = useState(false)
   const [disabled, setDisabled] = useState(false)
   const [sending, setSending] = useState(false)
@@ -103,9 +105,15 @@ export default function VoiceButton({ onResult }) {
       offset += chunk.length
     }
 
+    // The link dropped while recording: nothing may reach the fleet
+    if (commsDenied) {
+      onResult?.({ ok: false, data: {}, error: 'COMMS DENIED — recording discarded' })
+      return
+    }
+
     // Need at least 0.5s of audio
     if (merged.length < 8000) {
-      onResult?.({ success: false, error: 'Recording too short — click MIC, speak, then click STOP' })
+      onResult?.({ ok: false, data: {}, error: 'Recording too short — click MIC, speak, then click STOP' })
       return
     }
 
@@ -114,16 +122,9 @@ export default function VoiceButton({ onResult }) {
     const form = new FormData()
     form.append('audio', wavBlob, 'voice.wav')
 
-    try {
-      const res = await fetch('/api/voice-command', { method: 'POST', body: form })
-      const data = await res.json()
-      onResult?.(data)
-    } catch (err) {
-      onResult?.({ success: false, error: err.message })
-    } finally {
-      setSending(false)
-    }
-  }, [onResult])
+    onResult?.(await apiRequest('/api/voice-command', { form }))
+    setSending(false)
+  }, [onResult, commsDenied])
 
   function handleClick() {
     if (recording) {
@@ -145,9 +146,10 @@ export default function VoiceButton({ onResult }) {
     )
   }
 
+  // While recording, STOP stays usable even if the link drops (the audio is then discarded)
   return (
     <button
-      className={`px-3 py-1.5 text-sm rounded font-bold transition-colors select-none min-w-[56px] ${
+      className={`px-3 py-1.5 text-sm rounded font-bold transition-colors select-none min-w-[56px] disabled:opacity-50 disabled:cursor-not-allowed ${
         recording
           ? 'bg-red-600 text-white animate-pulse'
           : sending
@@ -155,7 +157,8 @@ export default function VoiceButton({ onResult }) {
             : 'bg-slate-700 hover:bg-slate-600 text-slate-200'
       }`}
       onClick={handleClick}
-      disabled={sending}
+      disabled={sending || (commsDenied && !recording)}
+      title={commsDenied ? 'Comms denied — fleet operating autonomously' : undefined}
     >
       {recording ? `STOP ${seconds}s` : sending ? '...' : 'MIC'}
     </button>

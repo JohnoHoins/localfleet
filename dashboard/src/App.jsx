@@ -1,5 +1,6 @@
-import { useRef, useState, useCallback } from 'react'
+import { useState, useCallback, useEffect } from 'react'
 import useWebSocket from './hooks/useWebSocket'
+import { apiRequest } from './lib/api'
 import FleetMap from './components/FleetMap'
 import AssetCard from './components/AssetCard'
 import CommandPanel from './components/CommandPanel'
@@ -10,72 +11,44 @@ import RTBButton from './components/RTBButton'
 import ContactPanel from './components/ContactPanel'
 import ScenarioPanel from './components/ScenarioPanel'
 
-const MAX_TRAIL = 200
-
 const SIM_SPEEDS = [1, 2, 4, 8]
 
 export default function App() {
-  const { fleetState, connected } = useWebSocket()
+  const { fleetState, trails, contactTrails, log, connected } = useWebSocket()
   const assets = fleetState?.assets || []
   const contacts = fleetState?.contacts || []
-  const trails = useRef({})
-  const contactTrails = useRef({})
   const commsMode = fleetState?.autonomy?.comms_mode || 'full'
-  const [timeScale, setTimeScale] = useState(1)
+  const commsDenied = commsMode === 'denied'
+  const [timeScale, setTimeScale] = useState(null) // null until the backend reports it
+  const [controlError, setControlError] = useState(null)
+
+  // SIM SPEED shows the backend's speed: read it on every (re)connect, so a
+  // page reload or a backend restart never leaves a stale highlight.
+  useEffect(() => {
+    if (!connected) return
+    let cancelled = false
+    apiRequest('/api/time-scale', { method: 'GET' }).then((r) => {
+      if (!cancelled && r.ok) setTimeScale(r.data.time_scale)
+    })
+    return () => { cancelled = true }
+  }, [connected])
+  const shownTimeScale = fleetState?.time_scale ?? timeScale
 
   const changeTimeScale = useCallback(async (scale) => {
-    try {
-      await fetch('/api/time-scale', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ scale }),
-      })
-      setTimeScale(scale)
-    } catch (e) {
-      console.error('Failed to set time scale:', e)
+    const r = await apiRequest('/api/time-scale', { json: { scale } })
+    if (r.ok) {
+      setTimeScale(r.data.time_scale ?? scale)
+      setControlError(null)
+    } else {
+      setControlError(`SIM SPEED: ${r.error}`)
     }
   }, [])
 
   const toggleCommsMode = useCallback(async () => {
     const newMode = commsMode === 'full' ? 'denied' : 'full'
-    try {
-      await fetch('/api/comms-mode', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ mode: newMode }),
-      })
-    } catch (e) {
-      console.error('Failed to toggle comms mode:', e)
-    }
+    const r = await apiRequest('/api/comms-mode', { json: { mode: newMode } })
+    setControlError(r.ok ? null : `COMMS LINK: ${r.error}`)
   }, [commsMode])
-
-  // Accumulate position history for asset trail lines
-  for (const a of assets) {
-    if (!trails.current[a.asset_id]) trails.current[a.asset_id] = []
-    const t = trails.current[a.asset_id]
-    const last = t[t.length - 1]
-    if (!last || Math.abs(a.x - last[0]) > 2 || Math.abs(a.y - last[1]) > 2) {
-      t.push([a.x, a.y])
-      if (t.length > MAX_TRAIL) t.shift()
-    }
-  }
-
-  // Accumulate position history for contact trail lines
-  for (const c of contacts) {
-    if (!contactTrails.current[c.contact_id]) contactTrails.current[c.contact_id] = []
-    const t = contactTrails.current[c.contact_id]
-    const last = t[t.length - 1]
-    if (!last || Math.abs(c.x - last[0]) > 2 || Math.abs(c.y - last[1]) > 2) {
-      t.push([c.x, c.y])
-      if (t.length > MAX_TRAIL) t.shift()
-    }
-  }
-
-  // Clean up trails for contacts that no longer exist
-  const activeContactIds = new Set(contacts.map(c => c.contact_id))
-  for (const id of Object.keys(contactTrails.current)) {
-    if (!activeContactIds.has(id)) delete contactTrails.current[id]
-  }
 
   return (
     <div className="h-screen flex flex-col" style={{ background: '#0b0f19' }}>
@@ -100,12 +73,13 @@ export default function App() {
         <div className="flex-[7] min-h-0">
           <FleetMap
             assets={assets}
-            trails={trails.current}
+            trails={trails}
             contacts={contacts}
-            contactTrails={contactTrails.current}
+            contactTrails={contactTrails}
             activeMission={fleetState?.active_mission || null}
             threatAssessments={fleetState?.threat_assessments || []}
             autonomy={fleetState?.autonomy || {}}
+            recommendedTarget={fleetState?.recommended_target || null}
           />
         </div>
 
@@ -124,13 +98,13 @@ export default function App() {
             contacts={contacts}
             interceptRecommended={fleetState?.intercept_recommended || false}
             recommendedTarget={fleetState?.recommended_target || null}
-            threatAssessments={fleetState?.threat_assessments || []}
+            commsDenied={commsDenied}
           />
-          <CommandPanel />
+          <CommandPanel commsDenied={commsDenied} />
 
           <div className="flex gap-2">
             <div className="flex-1">
-              <RTBButton />
+              <RTBButton commsDenied={commsDenied} />
             </div>
           </div>
 
@@ -143,12 +117,12 @@ export default function App() {
               <button
                 onClick={toggleCommsMode}
                 className={`px-3 py-1 text-xs font-bold rounded transition-colors ${
-                  commsMode === 'denied'
+                  commsDenied
                     ? 'bg-red-700 text-white animate-pulse'
                     : 'bg-green-700 text-white'
                 }`}
               >
-                {commsMode === 'denied' ? 'DENIED' : 'FULL'}
+                {commsDenied ? 'DENIED' : 'FULL'}
               </button>
             </div>
           </div>
@@ -163,7 +137,7 @@ export default function App() {
                     key={s}
                     onClick={() => changeTimeScale(s)}
                     className={`px-2 py-0.5 text-xs font-bold rounded transition-colors ${
-                      timeScale === s
+                      shownTimeScale === s
                         ? 'bg-blue-600 text-white'
                         : 'bg-slate-700 text-slate-400 hover:bg-slate-600'
                     }`}
@@ -174,8 +148,11 @@ export default function App() {
               </div>
             </div>
           </div>
-          <ScenarioPanel />
-          <MissionLog fleetState={fleetState} />
+          {controlError && (
+            <div className="text-[10px] text-red-400">ERROR: {controlError}</div>
+          )}
+          <ScenarioPanel commsDenied={commsDenied} />
+          <MissionLog fleetState={fleetState} log={log} />
         </div>
       </div>
     </div>

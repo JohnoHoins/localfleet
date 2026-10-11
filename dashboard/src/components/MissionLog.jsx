@@ -8,6 +8,7 @@ const DECISION_COLORS = {
   replan: 'text-blue-400',
   comms_fallback: 'text-amber-400',
   auto_engage: 'text-red-500',
+  intercept_complete: 'text-green-400',
 }
 
 const DECISION_BADGES = {
@@ -18,76 +19,27 @@ const DECISION_BADGES = {
   replan: 'bg-blue-900/60 text-blue-300',
   comms_fallback: 'bg-amber-900/60 text-amber-300',
   auto_engage: 'bg-red-900/80 text-red-200',
+  intercept_complete: 'bg-green-900/60 text-green-300',
 }
 
-export default function MissionLog({ fleetState }) {
-  const [entries, setEntries] = useState([])
+// `log` is the MISSION LOG, accumulated per frame by useWebSocket
+export default function MissionLog({ fleetState, log = [] }) {
   const [expandedId, setExpandedId] = useState(null)
-  const prevRef = useRef(null)
   const scrollRef = useRef(null)
 
   useEffect(() => {
-    if (!fleetState) return
-    const prev = prevRef.current
-    const newEntries = []
-    const ts = new Date(fleetState.timestamp * 1000).toLocaleTimeString('en-US', { hour12: false })
-
-    if (prev) {
-      // GPS mode change
-      if (prev.gps_mode !== fleetState.gps_mode) {
-        newEntries.push({ ts, msg: `GPS mode → ${fleetState.gps_mode.toUpperCase()}` })
-      }
-      // Mission change
-      if (prev.active_mission !== fleetState.active_mission && fleetState.active_mission) {
-        newEntries.push({ ts, msg: `Mission: ${fleetState.active_mission.toUpperCase()}` })
-      }
-      // Per-asset status changes
-      const prevAssets = Object.fromEntries((prev.assets || []).map((a) => [a.asset_id, a]))
-      for (const asset of fleetState.assets) {
-        const pa = prevAssets[asset.asset_id]
-        if (pa && pa.status !== asset.status) {
-          newEntries.push({ ts, msg: `${asset.asset_id.toUpperCase()} → ${asset.status.toUpperCase()}` })
-        }
-      }
-      // Threat level changes
-      const prevThreats = Object.fromEntries((prev.threat_assessments || []).map((t) => [t.contact_id, t]))
-      for (const ta of (fleetState.threat_assessments || [])) {
-        const pt = prevThreats[ta.contact_id]
-        if (pt && pt.threat_level !== ta.threat_level) {
-          if (ta.threat_level === 'warning' || ta.threat_level === 'critical') {
-            newEntries.push({ ts, msg: `THREAT: ${ta.contact_id.toUpperCase()} escalated to ${ta.threat_level.toUpperCase()}` })
-          }
-        } else if (!pt && (ta.threat_level === 'warning' || ta.threat_level === 'critical')) {
-          newEntries.push({ ts, msg: `THREAT: ${ta.contact_id.toUpperCase()} ${ta.threat_level.toUpperCase()} at ${(ta.distance / 1000).toFixed(1)}km` })
-        }
-      }
-      // Intercept recommendation
-      if (!prev.intercept_recommended && fleetState.intercept_recommended && fleetState.recommended_target) {
-        newEntries.push({ ts, msg: `AUTO: INTERCEPT recommended for ${fleetState.recommended_target.toUpperCase()}` })
-      }
-    } else {
-      newEntries.push({ ts, msg: `Fleet online — ${fleetState.assets.length} assets` })
-    }
-
-    prevRef.current = fleetState
-    if (newEntries.length > 0) {
-      setEntries((e) => [...e.slice(-100), ...newEntries])
-    }
-  }, [fleetState])
-
-  useEffect(() => {
     scrollRef.current?.scrollTo(0, scrollRef.current.scrollHeight)
-  }, [entries])
+  }, [log])
 
   const decisions = (fleetState?.decisions || []).slice().reverse()
 
   return (
-    <div className="border border-slate-700 rounded p-3 bg-slate-900/50 flex flex-col min-h-0">
+    <div className="border border-slate-700 rounded p-3 bg-slate-900/50 flex flex-col shrink-0">
       <div className="text-xs text-slate-500 mb-2 font-bold tracking-wider">MISSION LOG</div>
       <div ref={scrollRef} className="flex-1 overflow-y-auto text-xs text-slate-400 space-y-0.5 max-h-40">
-        {entries.length === 0 && <div className="text-slate-600">Waiting for events...</div>}
-        {entries.map((e, i) => (
-          <div key={i}>
+        {log.length === 0 && <div className="text-slate-600">Waiting for events...</div>}
+        {log.map((e) => (
+          <div key={e.id}>
             <span className="text-slate-600">{e.ts}</span> {e.msg}
           </div>
         ))}

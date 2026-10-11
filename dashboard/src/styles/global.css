@@ -8,8 +8,31 @@ body {
   font-family: 'JetBrains Mono', 'Fira Code', 'SF Mono', monospace;
 }
 
+/* Dark sea under the (optional) tiles, so the offline map looks intentional */
+.leaflet-container {
+  background: #0b0f19;
+}
+
 .dark-map-tiles {
   filter: brightness(0.6) invert(1) contrast(3) hue-rotate(200deg) saturate(0.3) brightness(0.7);
+}
+
+.leaflet-container .leaflet-control-attribution {
+  background: rgba(11, 15, 25, 0.75);
+  color: #64748b;
+}
+.leaflet-container .leaflet-control-attribution a {
+  color: #94a3b8;
+}
+.leaflet-container .leaflet-control-scale-line {
+  background: rgba(11, 15, 25, 0.75);
+  border-color: #475569;
+  color: #94a3b8;
+}
+
+/* Asset labels are hidden when zoomed out (FleetMap LabelDeclutter) */
+.hide-asset-labels .asset-label {
+  display: none;
 }
 
 /* GPS uncertainty rings — static, no animation */

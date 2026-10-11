@@ -1,3 +1,5 @@
+import { closingTrend, pickTarget, surfaceCentroid } from '../lib/threat'
+
 const GPS_COLORS = { full: '#22c55e', degraded: '#f59e0b', denied: '#ef4444' }
 
 const MISSION_COLORS = {
@@ -44,21 +46,28 @@ export default function MissionStatus({ fleetState, contacts = [] }) {
     .map(([k, v]) => `${v} ${k.toUpperCase()}`)
     .join(' / ')
 
-  // Fleet-to-contact bearing & distance
+  // Fleet-to-target bearing & distance — the contact the threat engine works,
+  // with the threat engine's own range and bearing (surface-vessel centroid)
   let targetInfo = null
-  if (contacts.length > 0 && assets.length > 0) {
-    const avgX = assets.reduce((s, a) => s + a.x, 0) / assets.length
-    const avgY = assets.reduce((s, a) => s + a.y, 0) / assets.length
-    const c = contacts[0]
-    const dx = c.x - avgX
-    const dy = c.y - avgY
-    const dist = Math.sqrt(dx * dx + dy * dy)
-    // Nautical bearing: atan2(dx, dy) gives 0=North, CW+
-    const bearing = ((Math.atan2(dx, dy) * 180 / Math.PI) % 360 + 360) % 360
-    targetInfo = {
-      id: c.contact_id,
-      dist: dist >= 1000 ? `${(dist / 1000).toFixed(1)}km` : `${dist.toFixed(0)}m`,
-      bearing: bearing.toFixed(0).padStart(3, '0'),
+  const target = pickTarget(contacts, threats, autonomy, recommendedTarget)
+  if (target) {
+    let dist = target.assessment?.distance
+    let bearing = target.assessment?.bearing_deg
+    const centroid = surfaceCentroid(assets)
+    if (dist == null && centroid) {
+      // No assessment yet (first frame after a spawn)
+      const dx = target.contact.x - centroid.x
+      const dy = target.contact.y - centroid.y
+      dist = Math.sqrt(dx * dx + dy * dy)
+      // Nautical bearing: atan2(dx, dy) gives 0=North, CW+
+      bearing = ((Math.atan2(dx, dy) * 180 / Math.PI) % 360 + 360) % 360
+    }
+    if (dist != null) {
+      targetInfo = {
+        id: target.contact.contact_id,
+        dist: dist >= 1000 ? `${(dist / 1000).toFixed(1)}km` : `${dist.toFixed(0)}m`,
+        bearing: bearing.toFixed(0).padStart(3, '0'),
+      }
     }
   }
 
@@ -95,7 +104,7 @@ export default function MissionStatus({ fleetState, contacts = [] }) {
       {/* Threat alerts */}
       {threats.filter(t => t.threat_level === 'warning' || t.threat_level === 'critical').map((t) => (
         <div key={t.contact_id} className={`mt-1 text-xs font-bold ${t.threat_level === 'critical' ? 'text-red-400' : 'text-orange-400'}`}>
-          THREAT: {t.contact_id.toUpperCase()} — {(t.distance / 1000).toFixed(1)}km @ {t.bearing_deg.toFixed(0)}° CLOSING {Math.abs(t.closing_rate).toFixed(1)} m/s
+          THREAT: {t.contact_id.toUpperCase()} — {(t.distance / 1000).toFixed(1)}km @ {t.bearing_deg.toFixed(0)}° {closingTrend(t.closing_rate)} {Math.abs(t.closing_rate).toFixed(1)} m/s
         </div>
       ))}
 
