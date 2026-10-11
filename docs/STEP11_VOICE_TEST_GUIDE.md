@@ -30,7 +30,14 @@ Coordinate system: meters, local frame. x = east, y = north. Waypoint range: 0�
 
 ## Terminal Setup
 
-You need **three terminals** running simultaneously.
+Voice input needs an Apple Silicon Mac (mlx-whisper) and the `ffmpeg` binary,
+which mlx-whisper uses to read audio: `brew install ffmpeg`. The first voice
+command downloads the Whisper model (about 1.6 GB) from Hugging Face, so it
+takes noticeably longer than the rest.
+
+The quickest way to start everything is to double-click
+`start_localfleet.command`; it also warns if ffmpeg is missing. To start the
+pieces by hand, you need **three terminals** running simultaneously.
 
 ### Terminal 1 — Ollama (LLM inference)
 
@@ -44,10 +51,11 @@ ollama serve
 
 ```bash
 cd localfleet
-uvicorn src.api.server:app --reload --port 8000
+source .venv/bin/activate
+uvicorn src.api.server:app --reload --host 127.0.0.1 --port 8000
 ```
 
-> Wait until you see: `Uvicorn running on http://0.0.0.0:8000`
+> Wait until you see: `Uvicorn running on http://127.0.0.1:8000`
 
 ### Terminal 3 — React Dashboard
 
@@ -68,13 +76,17 @@ Open **http://localhost:5173** in Chrome/Safari (must be localhost for mic acces
 ## How to Use Voice Commands
 
 1. Find the **MIC** button to the right of the SEND button in the COMMAND panel
-2. **Press and hold** the MIC button (mouse or touch)
+2. **Click** MIC once to start recording (no need to hold it). The button turns
+   pulsing red and counts up: **STOP 0s**, **STOP 1s**, ...
 3. Speak your command clearly
-4. **Release** the button when done speaking
-5. The button shows **REC** (pulsing red) while recording, then **...** while processing
+4. **Click** the button again (**STOP Ns**) when done speaking
+5. The button shows **...** while the audio is transcribed and parsed
 6. Result appears below the input — same area as text command results
 
 > First use: your browser will ask for microphone permission. Click **Allow**.
+>
+> Record at least half a second of audio, otherwise the result reads
+> "Recording too short — click MIC, speak, then click STOP".
 
 
 ---
@@ -153,9 +165,11 @@ What happens: Two vessels move to the area and spread out, holding position.
 
 Drone-primary mission — surface vessels stand by.
 
-> **"Eagle-1 conduct aerial recon of the southern area, sweep from 0, negative 500 to 400, negative 500 at 100 meters"**
+> **"Eagle-1 conduct aerial recon of the northern area, sweep around 400, 1200 at 100 meters"**
 
-What happens: Drone sweeps the southern sector. Surface vessels remain idle/independent. Mission type: AERIAL_RECON.
+What happens: Drone sweeps a 1 km x 1 km box centred on (400, 1200). Surface vessels not named in the command stay where they are. Mission type: AERIAL_RECON.
+
+> Keep recon areas inside the 0–2000 m waypoint range: the parser never generates negative coordinates, so "south of the fleet" cannot go below y = 0.
 
 ### 7. GPS-Denied Scenario
 
@@ -201,7 +215,7 @@ What happens: Assets move but positions on the map jitter with 25m noise. Uncert
 
 After each voice command, confirm:
 
-- [ ] MIC button showed pulsing red **REC** state while held
+- [ ] MIC button showed pulsing red **STOP Ns** while recording, then **...** while processing
 - [ ] Result panel shows **OK** with LLM response time
 - [ ] Parsed FleetCommand JSON appears (expand to inspect mission_type, assets, formation)
 - [ ] Assets start moving on the Leaflet map
@@ -212,9 +226,11 @@ After each voice command, confirm:
 
 | Symptom | Fix |
 |---------|-----|
-| MIC button stays disabled | Click it once first to trigger permission prompt. Check browser mic settings. |
-| "REC" but no result | Check Terminal 2 for errors. Audio format may need conversion — try shorter commands. |
-| Result shows error | Check Terminal 1 — Ollama may not be running or model not loaded. Run `ollama run qwen2.5:72b` to preload. |
+| MIC button is greyed out and does nothing | Microphone access was denied (or no microphone was found); the button stays disabled until the page is reloaded. Allow the microphone for `localhost` in the browser's site settings, then reload the page. |
+| Result shows "Transcription failed" (e.g. mentioning `ffmpeg`) | Check Terminal 2 for errors. mlx-whisper needs ffmpeg: `brew install ffmpeg`, then restart the backend. |
+| "Recording too short" | Click MIC, speak, then click STOP; record at least half a second. |
+| Result shows "COMMS DENIED" | Commands are refused while comms are denied. Switch the COMMS LINK toggle back to FULL first. |
+| Result shows a timeout or Ollama error | Check Terminal 1 — Ollama may not be running or the model may not be loaded (the first command after loading or a long idle is slow). Check `ollama list` shows `qwen2.5:72b`, preload it with `curl http://localhost:11434/api/generate -d '{"model": "qwen2.5:72b", "keep_alive": "60m"}'`, and retry. On slower machines raise `LOCALFLEET_LLM_TIMEOUT` (seconds) before starting the backend. |
 | Assets don't move | Check that WebSocket is connected (no red disconnect indicators). Check Terminal 2 logs for dispatch. |
 | Transcription is wrong | Speak slower, closer to mic. Short military-style phrases work best. |
 
@@ -234,6 +250,6 @@ Run these in order for a complete demo walkthrough:
 | 5 | "All vessels search area 800, 800 in line abreast" | Full surface fleet + formation |
 | 6 | "Eagle-1 sweep the eastern sector at 80 meters" | Drone sweep pattern |
 | 7 | "Bravo escort Charlie to 1000, 500 in column" | Escort mission |
-| 8 | "Eagle-1 conduct aerial recon south at 100 meters" | Aerial recon (drone-primary) |
+| 8 | "Eagle-1 conduct aerial recon around 400, 1200 at 100 meters" | Aerial recon (drone-primary) |
 | 9 | "All assets patrol the northern harbor in echelon. Eagle-1 orbit overhead at 150 meters." | Full multi-domain combined op |
 | 10 | "All assets loiter at current positions" | Loiter / hold |
