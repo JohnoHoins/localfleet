@@ -2,12 +2,14 @@
 """
 LocalFleet V2 Simulation Analyzer
 
-Reads captured data from data/sim_v2_capture.jsonl and produces:
-  - data/sim_v2_report.txt       — per-test analysis report with pass/fail
-  - data/sim_v2_timeline.csv     — second-by-second state with test_id
-  - data/sim_v2_formation.csv    — formation geometry per tick
-  - data/sim_v2_threats.csv      — threat escalation timeline
-  - data/sim_v2_drift.csv        — dead reckoning drift curve
+Reads captured data from data/sim_v2_capture.jsonl and produces, in
+data/sim_runs/ (gitignored, so the reference report committed as
+data/sim_v2_report.txt is not overwritten):
+  - sim_v2_report.txt       — per-test analysis report with pass/fail
+  - sim_v2_timeline.csv     — second-by-second state with test_id
+  - sim_v2_formation.csv    — formation geometry per tick
+  - sim_v2_threats.csv      — threat escalation timeline
+  - sim_v2_drift.csv        — dead reckoning drift curve
 
 Usage:
     .venv/bin/python scripts/analyze_simulation_v2.py
@@ -23,11 +25,12 @@ from pathlib import Path
 DATA_DIR = Path(__file__).resolve().parent.parent / "data"
 CAPTURE_FILE = DATA_DIR / "sim_v2_capture.jsonl"
 DECISIONS_FILE = DATA_DIR / "sim_v2_decisions.jsonl"
-REPORT_FILE = DATA_DIR / "sim_v2_report.txt"
-TIMELINE_FILE = DATA_DIR / "sim_v2_timeline.csv"
-FORMATION_FILE = DATA_DIR / "sim_v2_formation.csv"
-THREATS_FILE = DATA_DIR / "sim_v2_threats.csv"
-DRIFT_FILE = DATA_DIR / "sim_v2_drift.csv"
+OUT_DIR = DATA_DIR / "sim_runs"
+REPORT_FILE = OUT_DIR / "sim_v2_report.txt"
+TIMELINE_FILE = OUT_DIR / "sim_v2_timeline.csv"
+FORMATION_FILE = OUT_DIR / "sim_v2_formation.csv"
+THREATS_FILE = OUT_DIR / "sim_v2_threats.csv"
+DRIFT_FILE = OUT_DIR / "sim_v2_drift.csv"
 
 # ---------------------------------------------------------------------------
 # Data Loading
@@ -1318,6 +1321,7 @@ def main():
 
     print("\nGenerating report...")
     report = generate_report(test_groups, decisions)
+    OUT_DIR.mkdir(parents=True, exist_ok=True)
     REPORT_FILE.write_text(report)
     print(f"  Written to {REPORT_FILE}")
 

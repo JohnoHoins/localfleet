@@ -192,7 +192,9 @@ class FleetManager:
         self.last_command = cmd
         self.active_mission = cmd.mission_type
         self.formation = cmd.formation
-        self.comms_lost_behavior = cmd.comms_lost_behavior
+        # None = command didn't mention standing orders; keep the current ones
+        if cmd.comms_lost_behavior is not None:
+            self.comms_lost_behavior = cmd.comms_lost_behavior
         self._replan_counter = 0
 
         # --- Predictive intercept: replace surface waypoints with predicted point ---
