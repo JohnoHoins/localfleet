@@ -1,60 +1,63 @@
 import { useState } from 'react'
+import { apiRequest, commandWarnings } from '../lib/api'
 
-export default function ContactPanel({ contacts = [], interceptRecommended = false, recommendedTarget = null, threatAssessments = [] }) {
+export default function ContactPanel({ contacts = [], interceptRecommended = false, recommendedTarget = null, commsDenied = false }) {
   const [id, setId] = useState('bogey-1')
   const [x, setX] = useState('2000')
   const [y, setY] = useState('1000')
   const [hdg, setHdg] = useState('270')
   const [spd, setSpd] = useState('3.0')
   const [spawning, setSpawning] = useState(false)
+  const [notice, setNotice] = useState(null) // { error: bool, text } from the last action
 
   async function handleSpawn() {
+    const [xm, ym, hdgDeg, speed] = [x, y, hdg, spd].map(parseFloat)
+    if (![xm, ym, hdgDeg, speed].every(Number.isFinite)) {
+      setNotice({ error: true, text: 'X, Y, HDG and SPD must be numbers' })
+      return
+    }
     setSpawning(true)
-    try {
-      const hdgDeg = parseFloat(hdg)
-      const mathRad = (90 - hdgDeg) * Math.PI / 180
-      await fetch('/api/contacts', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          contact_id: id,
-          x: parseFloat(x),
-          y: parseFloat(y),
-          heading: mathRad,
-          speed: parseFloat(spd),
-          domain: 'surface',
-        }),
-      })
-    } catch { /* swallow */ }
+    const r = await apiRequest('/api/contacts', {
+      json: {
+        contact_id: id,
+        x: xm,
+        y: ym,
+        heading: (90 - hdgDeg) * Math.PI / 180,
+        speed,
+        domain: 'surface',
+      },
+    })
+    setNotice(r.ok ? null : { error: true, text: `SPAWN FAILED: ${r.error}` })
     setSpawning(false)
   }
 
   async function handleRemove(contactId) {
-    try {
-      await fetch(`/api/contacts/${contactId}`, { method: 'DELETE' })
-    } catch { /* swallow */ }
+    const r = await apiRequest(`/api/contacts/${encodeURIComponent(contactId)}`, { method: 'DELETE' })
+    setNotice(r.ok ? null : { error: true, text: `REMOVE ${contactId.toUpperCase()} FAILED: ${r.error}` })
   }
 
   async function handleIntercept() {
-    if (!recommendedTarget) return
+    if (!recommendedTarget || commsDenied) return
     const contact = contacts.find(c => c.contact_id === recommendedTarget)
     if (!contact) return
-    try {
-      await fetch('/api/command-direct', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          mission_type: 'intercept',
-          assets: [
-            { asset_id: 'alpha', domain: 'surface', waypoints: [{ x: contact.x, y: contact.y }], speed: 8.0 },
-            { asset_id: 'bravo', domain: 'surface', waypoints: [{ x: contact.x, y: contact.y }], speed: 8.0 },
-            { asset_id: 'charlie', domain: 'surface', waypoints: [{ x: contact.x, y: contact.y }], speed: 8.0 },
-            { asset_id: 'eagle-1', domain: 'air', waypoints: [{ x: contact.x, y: contact.y }], speed: 15.0, altitude: 100.0, drone_pattern: 'track' },
-          ],
-          formation: 'echelon',
-        }),
-      })
-    } catch { /* swallow */ }
+    const r = await apiRequest('/api/command-direct', {
+      json: {
+        mission_type: 'intercept',
+        assets: [
+          { asset_id: 'alpha', domain: 'surface', waypoints: [{ x: contact.x, y: contact.y }], speed: 8.0 },
+          { asset_id: 'bravo', domain: 'surface', waypoints: [{ x: contact.x, y: contact.y }], speed: 8.0 },
+          { asset_id: 'charlie', domain: 'surface', waypoints: [{ x: contact.x, y: contact.y }], speed: 8.0 },
+          { asset_id: 'eagle-1', domain: 'air', waypoints: [{ x: contact.x, y: contact.y }], speed: 15.0, altitude: 100.0, drone_pattern: 'track' },
+        ],
+        formation: 'echelon',
+      },
+    })
+    if (!r.ok) {
+      setNotice({ error: true, text: `INTERCEPT FAILED: ${r.error}` })
+    } else {
+      const warnings = commandWarnings(r)
+      setNotice(warnings.length > 0 ? { error: false, text: warnings.join('; ') } : null)
+    }
   }
 
   return (
@@ -105,10 +108,20 @@ export default function ContactPanel({ contacts = [], interceptRecommended = fal
       {interceptRecommended && recommendedTarget && (
         <button
           onClick={handleIntercept}
-          className="w-full mt-2 py-2 bg-red-700 hover:bg-red-600 text-white border border-red-500 rounded text-xs font-bold tracking-wider animate-pulse"
+          disabled={commsDenied}
+          title={commsDenied ? 'Comms denied — fleet operating autonomously' : undefined}
+          className={`w-full mt-2 py-2 bg-red-700 hover:bg-red-600 text-white border border-red-500 rounded text-xs font-bold tracking-wider disabled:opacity-50 disabled:cursor-not-allowed ${
+            commsDenied ? '' : 'animate-pulse'
+          }`}
         >
-          INTERCEPT {recommendedTarget.toUpperCase()}
+          INTERCEPT {recommendedTarget.toUpperCase()}{commsDenied && ' — COMMS DENIED'}
         </button>
+      )}
+
+      {notice && (
+        <div className={`mt-2 text-[10px] ${notice.error ? 'text-red-400' : 'text-amber-400'}`}>
+          {notice.error ? 'ERROR: ' : '⚠ '}{notice.text}
+        </div>
       )}
 
       {contacts.length > 0 && (

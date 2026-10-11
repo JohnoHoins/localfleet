@@ -1,23 +1,22 @@
 import { useState } from 'react'
+import { apiRequest } from '../lib/api'
 
 export default function GpsDeniedToggle({ currentMode, assets = [] }) {
   const [loading, setLoading] = useState(false)
+  const [error, setError] = useState(null)
   const isDenied = currentMode === 'denied'
   const nextMode = isDenied ? 'full' : 'denied'
 
   async function toggle() {
     setLoading(true)
-    try {
-      await fetch('/api/gps-mode', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          mode: nextMode,
-          noise_meters: 25.0,
-          update_rate_hz: 1.0,
-        }),
-      })
-    } catch { /* swallow */ }
+    const r = await apiRequest('/api/gps-mode', {
+      json: {
+        mode: nextMode,
+        noise_meters: 25.0,
+        update_rate_hz: 1.0,
+      },
+    })
+    setError(r.ok ? null : r.error)
     setLoading(false)
   }
 
@@ -46,6 +45,7 @@ export default function GpsDeniedToggle({ currentMode, assets = [] }) {
           {isDenied ? 'DENIED' : 'FULL'}
         </button>
       </div>
+      {error && <div className="mt-1 text-[10px] text-red-400">ERROR: {error}</div>}
     </div>
   )
 }
